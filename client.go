@@ -15,13 +15,23 @@ func Log(v ...interface{}) {
 }
 
 type Client struct {
-	Addr  string
-	MsgId uint64
+	Addr   string
+	MsgId  uint64
+	socket net.Conn
 }
 
 func NewClient(addr string) *Client {
 	var client = Client{Addr: addr}
 	client.MsgId = uint64(time.Now().Nanosecond())
+
+	// 创建udp协议的socket服务
+	socket, err := net.Dial("udp", addr)
+	if err != nil {
+		return nil
+	}
+
+	client.socket = socket
+
 	return &client
 }
 
@@ -59,13 +69,7 @@ func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
 		return err
 	}
 
-	// 创建udp协议的socket服务
-	socket, err := net.Dial("udp", n.Addr)
-	if err != nil {
-		return err
-	}
-
-	defer socket.Close()
+	socket := n.socket
 
 	// 设置 read/write 超时时间
 	err = socket.SetDeadline(time.Now().Add(2 * time.Second))
