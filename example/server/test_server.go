@@ -49,7 +49,13 @@ func Server(addr string) {
 		return
 	}
 
-	for i := 0; i < 100; i++ {
+	/*
+		for i := 0; i < 100; i++ {
+			time.Sleep(time.Second)
+		}
+	*/
+
+	for {
 		time.Sleep(time.Second)
 	}
 

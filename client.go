@@ -20,12 +20,12 @@ type Client struct {
 	socket net.Conn
 }
 
-func NewClient(addr string) *Client {
+func NewClient(network, addr string) *Client {
 	var client = Client{Addr: addr}
 	client.MsgId = uint64(time.Now().Nanosecond())
 
 	// 创建udp协议的socket服务
-	socket, err := net.Dial("udp", addr)
+	socket, err := net.Dial(network, addr)
 	if err != nil {
 		return nil
 	}
@@ -131,4 +131,8 @@ func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
 	}
 
 	return nil
+}
+
+func (n *Client) Delete() {
+	n.socket.Close()
 }
