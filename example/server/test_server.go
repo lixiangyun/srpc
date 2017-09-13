@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"golang_demo/srpc/srpc"
+	"srpc"
 	//"os"
 	//"runtime/pprof"
 	"time"

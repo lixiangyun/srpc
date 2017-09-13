@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"golang_demo/srpc/srpc"
 	"log"
+	"srpc"
 	//"os"
 	//"runtime/pprof"
 	"sync"
@@ -28,7 +28,7 @@ func Client(addr string) {
 
 	log.Println("start...")
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 100000; i++ {
 		a = uint32(i)
 		err = client.Call("Add", a, &b)
 		if err != nil {
