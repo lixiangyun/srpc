@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var server *srpc.Server
+
 type SAVE struct {
 	tmp uint32
 }
@@ -30,6 +32,27 @@ func (s *SAVE) Sub(a uint32, b *uint32) error {
 	return nil
 }
 
+func netstat() {
+
+	s1 := server.GetStat()
+
+	log.Println("start stat...")
+
+	for {
+
+		time.Sleep(time.Second)
+
+		s2 := server.GetStat()
+
+		s3 := s2.Sub(s1)
+
+		log.Printf("Speed %d cnt/s , %.3f KB/s\r\b",
+			s3.SendCnt, float32(s3.SendCnt)/(1024))
+
+		s1 = s2
+	}
+}
+
 func Server(addr string) {
 
 	var s SAVE
@@ -45,7 +68,7 @@ func Server(addr string) {
 	//pprof.StartCPUProfile(f)     // 开始cpu profile，结果写到文件f中
 	//defer pprof.StopCPUProfile() // 结束profile
 
-	server := srpc.NewServer(addr)
+	server = srpc.NewServer(addr)
 	server.BindMethod(&s)
 
 	err := server.Start()
@@ -54,15 +77,7 @@ func Server(addr string) {
 		return
 	}
 
-	/*
-		for i := 0; i < 100; i++ {
-			time.Sleep(time.Second)
-		}
-	*/
-
-	for {
-		time.Sleep(time.Second)
-	}
+	netstat()
 
 	server.Stop()
 }

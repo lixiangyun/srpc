@@ -29,16 +29,6 @@ type RsponseBlock struct {
 	Body    []byte
 }
 
-type RequestQueue struct {
-	req  RequestBlock
-	addr *net.UDPAddr
-}
-
-type RsponseQueue struct {
-	rsp  RsponseBlock
-	addr *net.UDPAddr
-}
-
 type funcinfo struct {
 	function reflect.Value
 	functype reflect.Type
@@ -46,15 +36,29 @@ type funcinfo struct {
 	output   reflect.Type
 }
 
+type Stat struct {
+	RecvCnt int64
+	SendCnt int64
+	ErrCnt  int64
+}
+
 type Server struct {
 	Addr string
+
+	stat Stat
 
 	symbol map[string]funcinfo
 	pthis  reflect.Value
 
 	wait sync.WaitGroup
+}
 
-	stop chan int
+func (s1 Stat) Sub(s2 Stat) Stat {
+	s1.RecvCnt -= s2.RecvCnt
+	s1.SendCnt -= s2.SendCnt
+	s1.ErrCnt -= s2.ErrCnt
+
+	return s1
 }
 
 // 报文序列化
@@ -88,8 +92,6 @@ func DecodePacket(buf []byte, rsp interface{}) error {
 func NewServer(addr string) *Server {
 
 	s := new(Server)
-
-	s.stop = make(chan int, 100)
 
 	s.Addr = addr
 	s.symbol = make(map[string]funcinfo, 0)
@@ -200,6 +202,10 @@ func (s *Server) Call(method string, parms []reflect.Value) error {
 	return errors.New("success")
 }
 
+func (s *Server) GetStat() Stat {
+	return s.stat
+}
+
 func msgprocess(conn net.Conn, s *Server) {
 
 	defer conn.Close()
@@ -218,10 +224,13 @@ func msgprocess(conn net.Conn, s *Server) {
 			return
 		}
 
+		s.stat.RecvCnt++
+
 		// 反序列化客户端请求的报文
 		err = DecodePacket(buf[:n], &reqblock)
 		if err != nil {
 			log.Println(err.Error())
+			s.stat.ErrCnt++
 			continue
 		}
 
@@ -230,6 +239,7 @@ func msgprocess(conn net.Conn, s *Server) {
 		parmtype, err := s.MatchMethod(reqblock.Method, reqblock.Parms)
 		if err != nil {
 			log.Println(err.Error())
+			s.stat.ErrCnt++
 			continue
 		}
 
@@ -241,6 +251,7 @@ func msgprocess(conn net.Conn, s *Server) {
 		err = DecodePacket(reqblock.Body, parms[0].Interface())
 		if err != nil {
 			log.Println(err.Error())
+			s.stat.ErrCnt++
 			continue
 		}
 
@@ -261,6 +272,7 @@ func msgprocess(conn net.Conn, s *Server) {
 		rspblock.Body, err = CodePacket(reflect.Indirect(parms[1]).Interface())
 		if err != nil {
 			log.Println(err.Error())
+			s.stat.ErrCnt++
 			continue
 		}
 
@@ -269,6 +281,7 @@ func msgprocess(conn net.Conn, s *Server) {
 		rspBuf, err := CodePacket(rspblock)
 		if err != nil {
 			log.Println(err.Error())
+			s.stat.ErrCnt++
 			continue
 		}
 
@@ -282,8 +295,13 @@ func msgprocess(conn net.Conn, s *Server) {
 			}
 
 			log.Println(err.Error())
-			continue
+
+			s.stat.ErrCnt++
+
+			return
 		}
+
+		s.stat.SendCnt++
 	}
 }
 
@@ -295,15 +313,17 @@ func (s *Server) Start() error {
 		return err
 	}
 
-	for {
-		conn, err2 := listen.Accept()
-		if err2 != nil {
-			fmt.Println(err.Error())
-			continue
+	go func() {
+		for {
+			conn, err2 := listen.Accept()
+			if err2 != nil {
+				fmt.Println(err.Error())
+				continue
+			}
+			s.wait.Add(1)
+			go msgprocess(conn, s)
 		}
-		s.wait.Add(1)
-		go msgprocess(conn, s)
-	}
+	}()
 
 	return nil
 }
