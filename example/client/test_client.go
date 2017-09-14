@@ -28,7 +28,7 @@ func Client(addr string) {
 
 	log.Println("start...")
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 10000; i++ {
 		a = uint32(i)
 		err = client.Call("Add", a, &b)
 		if err != nil {
@@ -45,9 +45,9 @@ func main() {
 	//pprof.StartCPUProfile(f)     // 开始cpu profile，结果写到文件f中
 	//defer pprof.StopCPUProfile() // 结束profile
 
-	wait.Add(10)
+	wait.Add(100)
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		go Client("localhost:1234")
 	}
 

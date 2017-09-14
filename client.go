@@ -20,12 +20,12 @@ type Client struct {
 	socket net.Conn
 }
 
-func NewClient(network, addr string) *Client {
+func NewClient(addr string) *Client {
 	var client = Client{Addr: addr}
 	client.MsgId = uint64(time.Now().Nanosecond())
 
 	// 创建udp协议的socket服务
-	socket, err := net.Dial(network, addr)
+	socket, err := net.Dial("tcp", addr)
 	if err != nil {
 		return nil
 	}
@@ -70,13 +70,6 @@ func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
 	}
 
 	socket := n.socket
-
-	// 设置 read/write 超时时间
-	err = socket.SetDeadline(time.Now().Add(2 * time.Second))
-	if err != nil {
-		Log(err.Error())
-		return err
-	}
 
 	//log.Println(reqblock)
 

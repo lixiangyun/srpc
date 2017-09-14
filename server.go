@@ -5,10 +5,10 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"reflect"
-	"runtime"
 	"runtime/debug"
 	"sync"
 )
@@ -47,15 +47,12 @@ type funcinfo struct {
 }
 
 type Server struct {
-	Addr   string
+	Addr string
+
 	symbol map[string]funcinfo
 	pthis  reflect.Value
 
-	conn *net.UDPConn
 	wait sync.WaitGroup
-
-	reqque chan RequestQueue
-	rspque chan RsponseQueue
 
 	stop chan int
 }
@@ -92,8 +89,6 @@ func NewServer(addr string) *Server {
 
 	s := new(Server)
 
-	s.reqque = make(chan RequestQueue, 5000)
-	s.rspque = make(chan RsponseQueue, 5000)
 	s.stop = make(chan int, 100)
 
 	s.Addr = addr
@@ -205,17 +200,19 @@ func (s *Server) Call(method string, parms []reflect.Value) error {
 	return errors.New("success")
 }
 
-func recvmsg(s *Server) {
+func msgprocess(conn net.Conn, s *Server) {
 
+	defer conn.Close()
 	defer s.wait.Done()
 
-	var reqmsg RequestQueue
-	var reqblock RequestBlock
 	var buf [4096]byte
 
 	for {
+
+		var reqblock RequestBlock
+
 		// 监听
-		n, addr, err := s.conn.ReadFromUDP(buf[0:])
+		n, err := conn.Read(buf[0:])
 		if err != nil {
 			log.Println("server shutdown.")
 			return
@@ -227,74 +224,6 @@ func recvmsg(s *Server) {
 			log.Println(err.Error())
 			continue
 		}
-
-		reqmsg.req = reqblock
-		reqmsg.addr = addr
-
-		s.reqque <- reqmsg
-	}
-}
-
-func sendmsg(s *Server) {
-
-	defer s.wait.Done()
-
-	for {
-
-		var rspmsg RsponseQueue
-
-		select {
-		case <-s.stop:
-			{
-				fmt.Println("sendmsg close")
-				return
-			}
-
-		case rspmsg, _ = <-s.rspque:
-			{
-				break
-			}
-		}
-
-		rspBuf, err := CodePacket(rspmsg.rsp)
-		if err != nil {
-			log.Println(err.Error())
-			continue
-		}
-
-		// 将序列化后的报文发送到客户端
-		_, err = s.conn.WriteToUDP(rspBuf, rspmsg.addr)
-		if err != nil {
-			log.Println(err.Error())
-			continue
-		}
-	}
-}
-
-func msgprocess(s *Server) {
-
-	defer s.wait.Done()
-
-	var rspmsg RsponseQueue
-
-	for {
-
-		var reqmsg RequestQueue
-
-		select {
-		case <-s.stop:
-			{
-				fmt.Println("msgprocess close")
-				return
-			}
-
-		case reqmsg, _ = <-s.reqque:
-			{
-				break
-			}
-		}
-
-		reqblock := reqmsg.req
 
 		//log.Println("Request: ", reqblock)
 
@@ -335,51 +264,51 @@ func msgprocess(s *Server) {
 			continue
 		}
 
-		rspmsg.addr = reqmsg.addr
-		rspmsg.rsp = rspblock
+		//log.Println("Rsponse: ", rspblock)
 
-		s.rspque <- rspmsg
+		rspBuf, err := CodePacket(rspblock)
+		if err != nil {
+			log.Println(err.Error())
+			continue
+		}
+
+		// 将序列化后的报文发送到客户端
+		_, err = conn.Write(rspBuf)
+		if err != nil {
+
+			if err == io.EOF {
+				log.Println("server shutdown.")
+				return
+			}
+
+			log.Println(err.Error())
+			continue
+		}
 	}
 }
 
 func (s *Server) Start() error {
 
-	addr, err := net.ResolveUDPAddr("udp", s.Addr)
+	listen, err := net.Listen("tcp", s.Addr)
 	if err != nil {
+		fmt.Println(err.Error())
 		return err
 	}
 
-	conn, err1 := net.ListenUDP("udp", addr)
-	if err1 != nil {
-		return err1
-	}
-
-	cpunum := runtime.NumCPU()
-	runtime.GOMAXPROCS(cpunum)
-
-	log.Println("max cpu num: ", cpunum)
-
-	s.wait.Add(2 + cpunum)
-	s.conn = conn
-
-	go recvmsg(s)
-	go sendmsg(s)
-
-	for i := 0; i < cpunum; i++ {
-		go msgprocess(s)
+	for {
+		conn, err2 := listen.Accept()
+		if err2 != nil {
+			fmt.Println(err.Error())
+			continue
+		}
+		s.wait.Add(1)
+		go msgprocess(conn, s)
 	}
 
 	return nil
 }
 
 func (s *Server) Stop() {
-	s.conn.Close()
-
-	cpunum := (runtime.NumCPU() + 2)
-
-	for i := 0; i < cpunum; i++ {
-		s.stop <- 0
-	}
 
 	fmt.Println("wait!")
 

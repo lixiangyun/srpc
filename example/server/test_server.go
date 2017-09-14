@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"srpc"
 	//"os"
-	//"runtime/pprof"
+	"runtime"
 	"time"
 )
 
@@ -16,7 +16,7 @@ func (s *SAVE) Add(a uint32, b *uint32) error {
 
 	*b = a + 1
 
-	//fmt.Println("call add ", a, *b, s.tmp)
+	//log.Println("call add ", a, *b, s.tmp)
 
 	return nil
 }
@@ -25,7 +25,7 @@ func (s *SAVE) Sub(a uint32, b *uint32) error {
 
 	*b = a - 1
 
-	//fmt.Println("call sub ", a, *b, s.tmp)
+	//log.Println("call sub ", a, *b, s.tmp)
 
 	return nil
 }
@@ -36,6 +36,11 @@ func Server(addr string) {
 
 	s.tmp = 100
 
+	cpunum := runtime.NumCPU()
+	runtime.GOMAXPROCS(cpunum)
+
+	log.Println("max cpu num: ", cpunum)
+
 	//f, _ := os.Create("profile_file")
 	//pprof.StartCPUProfile(f)     // 开始cpu profile，结果写到文件f中
 	//defer pprof.StopCPUProfile() // 结束profile
@@ -45,7 +50,7 @@ func Server(addr string) {
 
 	err := server.Start()
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Println(err.Error())
 		return
 	}
 
@@ -63,5 +68,6 @@ func Server(addr string) {
 }
 
 func main() {
+
 	Server(":1234")
 }
