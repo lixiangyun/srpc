@@ -6,9 +6,14 @@ Simple &amp; High performance RPC for Golang Library
 
 # 测试结果
 并发数	TPS
+
 5	  12743
+
 10	15806
+
 50	15941
+
 100	14356
+
 500	10451
 
