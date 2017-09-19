@@ -2,9 +2,8 @@ package main
 
 import (
 	"log"
-	"srpc"
-	//"os"
 	"runtime"
+	"srpc"
 	"time"
 )
 
@@ -32,15 +31,15 @@ func (s *SAVE) Sub(a uint32, b *uint32) error {
 	return nil
 }
 
-func netstat() {
+func netstat(cyc int) {
 
 	s1 := server.GetStat()
 
 	log.Println("start stat...")
 
-	for {
+	for i := 0; i < cyc; i++ {
 
-		time.Sleep(time.Second)
+		time.Sleep(5 * time.Second)
 
 		s2 := server.GetStat()
 
@@ -77,7 +76,7 @@ func Server(addr string) {
 		return
 	}
 
-	netstat()
+	netstat(10000000)
 
 	server.Stop()
 }
