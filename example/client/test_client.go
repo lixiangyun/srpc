@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"srpc"
-	//"os"
-	//"runtime/pprof"
+	"strconv"
 	"sync"
 )
 
@@ -16,6 +16,9 @@ func Client(addr string) {
 	defer wait.Done()
 
 	client := srpc.NewClient(addr)
+	if client == nil {
+		return
+	}
 
 	var a, b uint32
 	a = 1
@@ -33,22 +36,79 @@ func Client(addr string) {
 		err = client.Call("Add", a, &b)
 		if err != nil {
 			fmt.Println(err.Error())
+			return
 		}
 	}
 
 	log.Println("end...")
 }
 
+func Replay(c *srpc.Client) {
+	que := c.GetRelay()
+
+	for {
+		result, b := <-que
+
+		if b == false {
+			fmt.Println("client replay chan close!")
+			return
+		}
+
+		if result.MsgId >= 10000 {
+			fmt.Println("client test end!")
+			return
+		}
+	}
+}
+
+func ClientAsync(addr string) {
+
+	defer wait.Done()
+
+	client := srpc.NewClient(addr)
+	if client == nil {
+		return
+	}
+
+	var a, b uint32
+	a = 1
+
+	log.Println("start...")
+
+	go Replay(client)
+
+	for i := 0; i < 1000000; i++ {
+
+		a = uint32(i)
+		err := client.CallAsync("Add", a, &b)
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+	}
+
+	client.Delete()
+
+	log.Println("end...")
+
+}
+
 func main() {
 
-	//f, _ := os.Create("profile_file")
-	//pprof.StartCPUProfile(f)     // 开始cpu profile，结果写到文件f中
-	//defer pprof.StopCPUProfile() // 结束profile
+	num := 100
 
-	wait.Add(100)
+	args := os.Args
 
-	for i := 0; i < 100; i++ {
-		go Client("localhost:1234")
+	if len(args) == 2 {
+		num, _ = strconv.Atoi(args[1])
+	}
+
+	fmt.Println("num : ", num)
+
+	wait.Add(num)
+
+	for i := 0; i < num; i++ {
+		go ClientAsync("dev0:1234")
 	}
 
 	wait.Wait()
