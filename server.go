@@ -13,20 +13,20 @@ import (
 	"sync"
 )
 
+var SLICE_FLAG = []byte{255, 254, 253, 252}
+
 type RequestBlock struct {
-	MsgType uint64
-	MsgId   uint64
-	Method  string
-	Parms   [2]string
-	Body    []byte
+	MsgId  uint64
+	Method string
+	Parms  [2]string
+	Body   []byte
 }
 
 type RsponseBlock struct {
-	MsgType uint64
-	MsgId   uint64
-	Method  string
-	Result  string
-	Body    []byte
+	MsgId  uint64
+	Method string
+	Result string
+	Body   []byte
 }
 
 type funcinfo struct {
@@ -61,12 +61,105 @@ func (s1 Stat) Sub(s2 Stat) Stat {
 	return s1
 }
 
-// 报文序列化
-func CodePacket(req interface{}) ([]byte, error) {
+func SliceCheck(buf []byte) int {
+	length := len(buf)
+	if length < 4 {
+		return -1
+	}
+
+	for i := 0; i < length-4; i++ {
+		if buf[i] == SLICE_FLAG[0] &&
+			buf[i+1] == SLICE_FLAG[1] &&
+			buf[i+2] == SLICE_FLAG[2] &&
+			buf[i+3] == SLICE_FLAG[3] {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func SendRequestBlock(conn net.Conn, reqblock RequestBlock) error {
 	iobuf := new(bytes.Buffer)
 
 	enc := gob.NewEncoder(iobuf)
+	err := enc.Encode(reqblock)
+	if err != nil {
+		return err
+	}
 
+	cnt, err := iobuf.Write(SLICE_FLAG)
+	if cnt != len(SLICE_FLAG) {
+		return errors.New("iobuf.write failed!")
+	}
+
+	if err != nil {
+		return err
+	}
+
+	err = FullyWrite(conn, iobuf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func SendRsponseBlock(conn net.Conn, rspblock RsponseBlock) error {
+
+	iobuf := new(bytes.Buffer)
+
+	enc := gob.NewEncoder(iobuf)
+	err := enc.Encode(rspblock)
+	if err != nil {
+		return err
+	}
+
+	cnt, err := iobuf.Write(SLICE_FLAG)
+	if cnt != len(SLICE_FLAG) {
+		return errors.New("iobuf.write failed!")
+	}
+
+	if err != nil {
+		return err
+	}
+
+	err = FullyWrite(conn, iobuf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func FullyWrite(conn net.Conn, buf []byte) error {
+
+	totallen := len(buf)
+	sendcnt := 0
+
+	for {
+
+		cnt, err := conn.Write(buf[sendcnt:])
+		if err != nil {
+			return err
+		}
+
+		if cnt <= 0 {
+			return errors.New("conn write error!")
+		}
+
+		if cnt+sendcnt >= totallen {
+			return nil
+		}
+
+		sendcnt += cnt
+	}
+}
+
+// 报文序列化
+func CodePacket(req interface{}) ([]byte, error) {
+	iobuf := new(bytes.Buffer)
+	enc := gob.NewEncoder(iobuf)
 	err := enc.Encode(req)
 	if err != nil {
 		debug.PrintStack()
@@ -81,7 +174,6 @@ func DecodePacket(buf []byte, rsp interface{}) error {
 	iobuf := bytes.NewReader(buf)
 	denc := gob.NewDecoder(iobuf)
 	err := denc.Decode(rsp)
-
 	if err != nil {
 		debug.PrintStack()
 	}
@@ -92,7 +184,6 @@ func DecodePacket(buf []byte, rsp interface{}) error {
 func NewServer(addr string) *Server {
 
 	s := new(Server)
-
 	s.Addr = addr
 	s.symbol = make(map[string]funcinfo, 0)
 
@@ -206,102 +297,116 @@ func (s *Server) GetStat() Stat {
 	return s.stat
 }
 
-func msgprocess(conn net.Conn, s *Server) {
+func MsgProcess(conn net.Conn, s *Server) {
 
 	defer conn.Close()
 	defer s.wait.Done()
 
 	var buf [4096]byte
+	var tmpbuf [4096]byte
+	length := 0
 
 	for {
 
-		var reqblock RequestBlock
-
 		// 监听
-		n, err := conn.Read(buf[0:])
+		cnt, err := conn.Read(buf[length:])
 		if err != nil {
 			log.Println("server shutdown.")
 			return
 		}
 
-		s.stat.RecvCnt++
+		length += cnt
 
-		// 反序列化客户端请求的报文
-		err = DecodePacket(buf[:n], &reqblock)
-		if err != nil {
-			log.Println(err.Error())
-			s.stat.ErrCnt++
-			continue
-		}
+		for {
 
-		//log.Println("Request: ", reqblock)
+			if length == 0 {
+				break
+			}
 
-		parmtype, err := s.MatchMethod(reqblock.Method, reqblock.Parms)
-		if err != nil {
-			log.Println(err.Error())
-			s.stat.ErrCnt++
-			continue
-		}
+			index := SliceCheck(buf[0:length])
+			if -1 == index {
+				break
+			}
 
-		var parms [2]reflect.Value
+			copy(tmpbuf[0:], buf[0:index])
 
-		parms[0] = reflect.New(parmtype[0])
-		parms[1] = reflect.New(parmtype[1])
+			if index+4 >= length {
+				length = 0
 
-		err = DecodePacket(reqblock.Body, parms[0].Interface())
-		if err != nil {
-			log.Println(err.Error())
-			s.stat.ErrCnt++
-			continue
-		}
+			} else {
+				copy(buf[0:], buf[index+4:length])
+				length = length - (index + 4)
+			}
 
-		var input [2]reflect.Value
+			var reqblock RequestBlock
 
-		input[0] = reflect.Indirect(parms[0])
-		input[1] = parms[1]
+			// 反序列化客户端请求的报文
+			err = DecodePacket(tmpbuf[0:index], &reqblock)
+			if err != nil {
+				log.Println(err.Error())
+				log.Println(len(tmpbuf), tmpbuf)
+				log.Println("length", length)
+				log.Println("index", index)
+				log.Println(len(tmpbuf), tmpbuf)
+				continue
+			}
 
-		err = s.Call(reqblock.Method, input[0:])
+			s.stat.RecvCnt++
 
-		var rspblock RsponseBlock
+			parmtype, err := s.MatchMethod(reqblock.Method, reqblock.Parms)
+			if err != nil {
+				log.Println(err.Error())
+				s.stat.ErrCnt++
+				continue
+			}
 
-		rspblock.MsgType = reqblock.MsgType
-		rspblock.MsgId = reqblock.MsgId
-		rspblock.Method = reqblock.Method
-		rspblock.Result = err.Error()
+			var parms [2]reflect.Value
 
-		rspblock.Body, err = CodePacket(reflect.Indirect(parms[1]).Interface())
-		if err != nil {
-			log.Println(err.Error())
-			s.stat.ErrCnt++
-			continue
-		}
+			parms[0] = reflect.New(parmtype[0])
+			parms[1] = reflect.New(parmtype[1])
 
-		//log.Println("Rsponse: ", rspblock)
+			err = DecodePacket(reqblock.Body, parms[0].Interface())
+			if err != nil {
+				log.Println(err.Error())
+				s.stat.ErrCnt++
+				continue
+			}
 
-		rspBuf, err := CodePacket(rspblock)
-		if err != nil {
-			log.Println(err.Error())
-			s.stat.ErrCnt++
-			continue
-		}
+			var input [2]reflect.Value
 
-		// 将序列化后的报文发送到客户端
-		_, err = conn.Write(rspBuf)
-		if err != nil {
+			input[0] = reflect.Indirect(parms[0])
+			input[1] = parms[1]
 
-			if err == io.EOF {
-				log.Println("server shutdown.")
+			err = s.Call(reqblock.Method, input[0:])
+
+			var rspblock RsponseBlock
+
+			rspblock.MsgId = reqblock.MsgId
+			rspblock.Method = reqblock.Method
+			rspblock.Result = err.Error()
+
+			rspblock.Body, err = CodePacket(reflect.Indirect(parms[1]).Interface())
+			if err != nil {
+				log.Println(err.Error())
+				s.stat.ErrCnt++
+				continue
+			}
+
+			//log.Println("Rsponse: ", rspblock)
+
+			err = SendRsponseBlock(conn, rspblock)
+			if err != nil {
+				if err == io.EOF {
+					log.Println("server shutdown.")
+					return
+				}
+				log.Println(err.Error())
+				s.stat.ErrCnt++
 				return
 			}
 
-			log.Println(err.Error())
-
-			s.stat.ErrCnt++
-
-			return
+			s.stat.SendCnt++
 		}
-
-		s.stat.SendCnt++
 	}
 }
 
@@ -321,7 +426,7 @@ func (s *Server) Start() error {
 				continue
 			}
 			s.wait.Add(1)
-			go msgprocess(conn, s)
+			go MsgProcess(conn, s)
 		}
 	}()
 
