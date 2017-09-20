@@ -4,12 +4,18 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"srpc"
 	"strconv"
 	"sync"
+	"time"
 )
 
 var wait sync.WaitGroup
+
+const (
+	MAX_MSGID = 100000
+)
 
 func Client(addr string) {
 
@@ -54,7 +60,7 @@ func Replay(c *srpc.Client) {
 			return
 		}
 
-		if result.MsgId >= 10000 {
+		if result.MsgId >= MAX_MSGID {
 			fmt.Println("client test end!")
 			return
 		}
@@ -77,38 +83,48 @@ func ClientAsync(addr string) {
 
 	go Replay(client)
 
-	for i := 0; i < 1000000; i++ {
-
-		a = uint32(i)
-		err := client.CallAsync("Add", a, &b)
-		if err != nil {
-			fmt.Println(err.Error())
-			return
+	for i := 0; i < MAX_MSGID/100; i++ {
+		for j := 0; j < 100; j++ {
+			a = uint32(i)
+			err := client.CallAsync("Add", a, &b)
+			if err != nil {
+				fmt.Println(err.Error())
+				return
+			}
 		}
+		time.Sleep(time.Millisecond)
 	}
 
 	client.Delete()
 
 	log.Println("end...")
-
 }
 
 func main() {
 
-	num := 100
+	addr := "localhost:1234"
+
+	cpunum := runtime.NumCPU()
+	runtime.GOMAXPROCS(cpunum)
+
+	log.Println("max cpu num: ", cpunum)
+
+	num := 1
 
 	args := os.Args
 
-	if len(args) == 2 {
+	if len(args) == 3 {
 		num, _ = strconv.Atoi(args[1])
+		addr = args[2]
 	}
 
-	fmt.Println("num : ", num)
+	log.Println("num : ", num)
+	log.Println("addr : ", addr)
 
 	wait.Add(num)
 
 	for i := 0; i < num; i++ {
-		go ClientAsync("dev0:1234")
+		go ClientAsync(addr)
 	}
 
 	wait.Wait()
