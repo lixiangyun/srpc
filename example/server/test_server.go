@@ -48,7 +48,7 @@ func netstat(cyc int) {
 
 		s3 := s2.Sub(s1)
 
-		log.Printf("Speed %d cnt/s , %.3f KB/s\r\b",
+		log.Printf("Speed %d cnt/s , %.3f KB/s \r\n",
 			s3.SendCnt, float32(s3.SendCnt)/(1024))
 
 		s1 = s2
