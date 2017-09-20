@@ -15,11 +15,12 @@ func Log(v ...interface{}) {
 }
 
 type Client struct {
-	Addr   string
-	MsgId  uint64
-	socket net.Conn
-	Reply  chan Result
-	Sended map[uint64]Result
+	Addr     string
+	MsgId    uint64
+	socket   net.Conn
+	Reply    chan Result
+	Sended   map[uint64]Result
+	ReqBlock chan RequestBlock
 
 	lock sync.Mutex
 	wait sync.WaitGroup
@@ -43,14 +44,14 @@ func NewClient(addr string) *Client {
 		return nil
 	}
 
+	client.ReqBlock = make(chan RequestBlock, 1000)
 	client.Reply = make(chan Result, 1000)
 	client.Sended = make(map[uint64]Result, 1000)
-
 	client.socket = socket
 
-	client.wait.Add(1)
-
+	client.wait.Add(2)
 	go client.AsyncProccess()
+	go client.SendProccess()
 
 	return &client
 }
@@ -146,6 +147,30 @@ func (n *Client) GetRelay() chan Result {
 	return n.Reply
 }
 
+func (n *Client) SendProccess() {
+
+	defer n.wait.Done()
+
+	reqarray := make([]RequestBlock, 20)
+	num := 0
+
+	for {
+		reqblock := <-n.ReqBlock
+		reqarray[num] = reqblock
+
+		num++
+
+		if num >= 20 {
+			err := SendRequestBlock(n.socket, reqarray)
+			if err != nil {
+				log.Println(err.Error())
+				return
+			}
+			num = 0
+		}
+	}
+}
+
 func (n *Client) AsyncProccess() {
 
 	defer n.wait.Done()
@@ -196,18 +221,13 @@ func (n *Client) AsyncProccess() {
 			}
 
 			n.lock.Lock()
-
 			result, b := n.Sended[rspblock.MsgId]
 			if b == false {
-
 				n.lock.Unlock()
-
 				Log("can not found this msgid!", rspblock.MsgId)
 				continue
 			}
-
 			delete(n.Sended, rspblock.MsgId)
-
 			n.lock.Unlock()
 
 			// 反序列化报文
@@ -225,7 +245,6 @@ func (n *Client) AsyncProccess() {
 func (n *Client) CallAsync(method string, req interface{}, rsp interface{}) error {
 
 	var err error
-
 	requestValue := reflect.ValueOf(req)
 	rsponseValue := reflect.ValueOf(rsp)
 
@@ -267,11 +286,7 @@ func (n *Client) CallAsync(method string, req interface{}, rsp interface{}) erro
 
 	//log.Println(reqblock)
 
-	err = SendRequestBlock(n.socket, reqblock)
-	if err != nil {
-		Log(err.Error())
-		return err
-	}
+	n.ReqBlock <- reqblock
 
 	return nil
 }
