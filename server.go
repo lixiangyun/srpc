@@ -5,7 +5,6 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"reflect"
@@ -51,6 +50,8 @@ type Server struct {
 	pthis  reflect.Value
 
 	wait sync.WaitGroup
+
+	RspBlock chan RsponseBlock
 }
 
 func (s1 Stat) Sub(s2 Stat) Stat {
@@ -79,25 +80,30 @@ func SliceCheck(buf []byte) int {
 	return -1
 }
 
-func SendRequestBlock(conn net.Conn, reqblock RequestBlock) error {
+func SendRequestBlock(conn net.Conn, reqblock []RequestBlock) error {
 	iobuf := new(bytes.Buffer)
 
-	enc := gob.NewEncoder(iobuf)
-	err := enc.Encode(reqblock)
-	if err != nil {
-		return err
+	for _, vblock := range reqblock {
+
+		//fmt.Println("vblock: ", vblock)
+
+		enc := gob.NewEncoder(iobuf)
+		err := enc.Encode(vblock)
+		if err != nil {
+			return err
+		}
+
+		cnt, err := iobuf.Write(SLICE_FLAG)
+		if cnt != len(SLICE_FLAG) {
+			return errors.New("iobuf.write failed!")
+		}
+
+		if err != nil {
+			return err
+		}
 	}
 
-	cnt, err := iobuf.Write(SLICE_FLAG)
-	if cnt != len(SLICE_FLAG) {
-		return errors.New("iobuf.write failed!")
-	}
-
-	if err != nil {
-		return err
-	}
-
-	err = FullyWrite(conn, iobuf.Bytes())
+	err := FullyWrite(conn, iobuf.Bytes())
 	if err != nil {
 		return err
 	}
@@ -105,26 +111,28 @@ func SendRequestBlock(conn net.Conn, reqblock RequestBlock) error {
 	return nil
 }
 
-func SendRsponseBlock(conn net.Conn, rspblock RsponseBlock) error {
+func SendRsponseBlock(conn net.Conn, rspblock []RsponseBlock) error {
 
 	iobuf := new(bytes.Buffer)
 
-	enc := gob.NewEncoder(iobuf)
-	err := enc.Encode(rspblock)
-	if err != nil {
-		return err
+	for _, vblock := range rspblock {
+		enc := gob.NewEncoder(iobuf)
+		err := enc.Encode(vblock)
+		if err != nil {
+			return err
+		}
+
+		cnt, err := iobuf.Write(SLICE_FLAG)
+		if cnt != len(SLICE_FLAG) {
+			return errors.New("iobuf.write failed!")
+		}
+
+		if err != nil {
+			return err
+		}
 	}
 
-	cnt, err := iobuf.Write(SLICE_FLAG)
-	if cnt != len(SLICE_FLAG) {
-		return errors.New("iobuf.write failed!")
-	}
-
-	if err != nil {
-		return err
-	}
-
-	err = FullyWrite(conn, iobuf.Bytes())
+	err := FullyWrite(conn, iobuf.Bytes())
 	if err != nil {
 		return err
 	}
@@ -252,58 +260,97 @@ func (s *Server) BindMethod(pthis interface{}) {
 	}
 }
 
-func (s *Server) MatchMethod(method string, parms [2]string) ([]reflect.Type, error) {
-
-	fun, b := s.symbol[method]
-	if b == false {
-		return nil, errors.New("can not found " + method)
-	}
-
-	for i := 0; i < 2; i++ {
-		if parms[i] != fun.input[i].String() {
-			errs := fmt.Sprintf("MatchMethod parm(%d) type not match : %s -> %s \r\n",
-				i, parms[i], fun.input[i].String())
-			return nil, errors.New(errs)
-		}
-	}
-
-	return fun.input[0:], nil
-}
-
-func (s *Server) Call(method string, parms []reflect.Value) error {
-
-	fun, b := s.symbol[method]
-	if b == false {
-		return errors.New("can not found " + method)
-	}
-
-	parms = fun.function.Call(parms)
-
-	if len(parms) < 1 {
-		return nil
-	}
-
-	if parms[0].Type().Name() == "error" {
-		i := parms[0].Interface()
-		if i != nil {
-			return i.(error)
-		}
-	}
-
-	return errors.New("success")
-}
-
 func (s *Server) GetStat() Stat {
 	return s.stat
 }
 
-func MsgProcess(conn net.Conn, s *Server) {
+func (s *Server) CallMethod(reqblock RequestBlock) (rspblock RsponseBlock, err error) {
+
+	funcinfo, b := s.symbol[reqblock.Method]
+	if b == false {
+		err = errors.New("can not found method : " + reqblock.Method)
+		return
+	}
+
+	for i := 0; i < 2; i++ {
+		if reqblock.Parms[i] != funcinfo.input[i].String() {
+			errs := fmt.Sprintf("MatchMethod parm(%d) type not match : %s -> %s \r\n",
+				i, reqblock.Parms[i], funcinfo.input[i].String())
+			err = errors.New(errs)
+			return
+		}
+	}
+
+	parmtype := funcinfo.input[0:]
+
+	var parms [2]reflect.Value
+
+	parms[0] = reflect.New(parmtype[0])
+	parms[1] = reflect.New(parmtype[1])
+
+	err = DecodePacket(reqblock.Body, parms[0].Interface())
+	if err != nil {
+		return
+	}
+
+	var input [2]reflect.Value
+
+	input[0] = reflect.Indirect(parms[0])
+	input[1] = parms[1]
+
+	output := funcinfo.function.Call(input[0:])
+
+	if output[0].Type().Name() == "error" {
+		i := output[0].Interface()
+		if i != nil {
+			rspblock.Result = i.(error).Error()
+		}
+	} else {
+		rspblock.Result = "success"
+	}
+
+	rspblock.MsgId = reqblock.MsgId
+	rspblock.Method = reqblock.Method
+
+	rspblock.Body, err = CodePacket(reflect.Indirect(parms[1]).Interface())
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func SendProccess(conn net.Conn, s *Server, que chan RsponseBlock) {
+
+	defer s.wait.Done()
+
+	rsparray := make([]RsponseBlock, 20)
+	num := 0
+
+	for {
+		rspblock := <-que
+		rsparray[num] = rspblock
+
+		num++
+
+		if num >= 20 {
+			err := SendRsponseBlock(conn, rsparray)
+			if err != nil {
+				log.Println(err.Error())
+				return
+			}
+			num = 0
+		}
+	}
+}
+
+func MsgProcess(conn net.Conn, s *Server, rspque chan RsponseBlock) {
 
 	defer conn.Close()
 	defer s.wait.Done()
 
-	var buf [4096]byte
-	var tmpbuf [4096]byte
+	var buf [65535]byte
+	var tmpbuf [1024]byte
 	length := 0
 
 	for {
@@ -344,66 +391,24 @@ func MsgProcess(conn net.Conn, s *Server) {
 			err = DecodePacket(tmpbuf[0:index], &reqblock)
 			if err != nil {
 				log.Println(err.Error())
-				log.Println(len(tmpbuf), tmpbuf)
-				log.Println("length", length)
-				log.Println("index", index)
-				log.Println(len(tmpbuf), tmpbuf)
+				//log.Println(len(tmpbuf), tmpbuf)
+				//log.Println("length", length)
+				//log.Println("index", index)
+				//log.Println(len(tmpbuf), tmpbuf)
 				continue
 			}
 
 			s.stat.RecvCnt++
 
-			parmtype, err := s.MatchMethod(reqblock.Method, reqblock.Parms)
+			rspblock, err := s.CallMethod(reqblock)
 			if err != nil {
 				log.Println(err.Error())
-				s.stat.ErrCnt++
-				continue
-			}
-
-			var parms [2]reflect.Value
-
-			parms[0] = reflect.New(parmtype[0])
-			parms[1] = reflect.New(parmtype[1])
-
-			err = DecodePacket(reqblock.Body, parms[0].Interface())
-			if err != nil {
-				log.Println(err.Error())
-				s.stat.ErrCnt++
-				continue
-			}
-
-			var input [2]reflect.Value
-
-			input[0] = reflect.Indirect(parms[0])
-			input[1] = parms[1]
-
-			err = s.Call(reqblock.Method, input[0:])
-
-			var rspblock RsponseBlock
-
-			rspblock.MsgId = reqblock.MsgId
-			rspblock.Method = reqblock.Method
-			rspblock.Result = err.Error()
-
-			rspblock.Body, err = CodePacket(reflect.Indirect(parms[1]).Interface())
-			if err != nil {
-				log.Println(err.Error())
-				s.stat.ErrCnt++
 				continue
 			}
 
 			//log.Println("Rsponse: ", rspblock)
 
-			err = SendRsponseBlock(conn, rspblock)
-			if err != nil {
-				if err == io.EOF {
-					log.Println("server shutdown.")
-					return
-				}
-				log.Println(err.Error())
-				s.stat.ErrCnt++
-				return
-			}
+			rspque <- rspblock
 
 			s.stat.SendCnt++
 		}
@@ -420,13 +425,15 @@ func (s *Server) Start() error {
 
 	go func() {
 		for {
+			rspque := make(chan RsponseBlock, 1000)
 			conn, err2 := listen.Accept()
 			if err2 != nil {
 				fmt.Println(err.Error())
 				continue
 			}
-			s.wait.Add(1)
-			go MsgProcess(conn, s)
+			s.wait.Add(2)
+			go MsgProcess(conn, s, rspque)
+			go SendProccess(conn, s, rspque)
 		}
 	}()
 
