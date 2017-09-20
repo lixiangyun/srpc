@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"log"
+	"os"
+	"reflect"
 	"runtime"
 	"srpc"
 	"time"
@@ -39,7 +42,7 @@ func netstat(cyc int) {
 
 	for i := 0; i < cyc; i++ {
 
-		time.Sleep(5 * time.Second)
+		time.Sleep(time.Second)
 
 		s2 := server.GetStat()
 
@@ -50,6 +53,61 @@ func netstat(cyc int) {
 
 		s1 = s2
 	}
+}
+
+func makereqblock(method string, req interface{}, rsp interface{}) (srpc.RequestBlock, error) {
+
+	var reqblock srpc.RequestBlock
+	var err error
+
+	requestValue := reflect.ValueOf(req)
+	rsponseValue := reflect.ValueOf(rsp)
+
+	// 校验参数合法性，req必须是非指针类型，rsp必须是指针类型
+	if rsponseValue.Kind() != reflect.Ptr {
+		return reqblock, errors.New("parm rsp is'nt ptr type!")
+	}
+
+	if requestValue.Kind() == reflect.Ptr {
+		return reqblock, errors.New("parm req is ptr type!")
+	}
+
+	rsponseValue = reflect.Indirect(rsponseValue)
+
+	reqblock.Method = method
+	reqblock.MsgId = 0
+	reqblock.Parms[0] = requestValue.Type().String()
+	reqblock.Parms[1] = rsponseValue.Type().String()
+	reqblock.Body, err = srpc.CodePacket(req)
+	if err != nil {
+		return reqblock, err
+	}
+
+	return reqblock, nil
+}
+
+func test1(s *srpc.Server) {
+	var a, b uint32
+	a = 1
+
+	reqblock, err := makereqblock("Add", a, &b)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+
+	log.Println("bench mark test! ")
+
+	for i := 0; i < 1000000; i++ {
+		_, err := s.CallMethod(reqblock)
+		if err != nil {
+			log.Println(err.Error())
+			return
+		}
+	}
+
+	log.Println("bench mark end! ")
+
 }
 
 func Server(addr string) {
@@ -76,12 +134,19 @@ func Server(addr string) {
 		return
 	}
 
-	netstat(10000000)
+	netstat(100000)
 
 	server.Stop()
 }
 
 func main() {
+	addr := ":1234"
+	args := os.Args
+	if len(args) == 2 {
+		addr = args[1]
+	}
 
-	Server(":1234")
+	log.Println("Addr ", addr)
+
+	Server(addr)
 }
