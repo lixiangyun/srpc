@@ -151,7 +151,7 @@ func (n *Client) SendProccess() {
 
 	defer n.wait.Done()
 
-	reqarray := make([]RequestBlock, 100)
+	reqarray := make([]RequestBlock, 1001)
 
 	for {
 
@@ -162,8 +162,8 @@ func (n *Client) SendProccess() {
 		index++
 
 		num := len(n.ReqBlock)
-		if num > 50 {
-			num = 50
+		if num > 1000 {
+			num = 1000
 		}
 
 		for i := 0; i < num; i++ {
