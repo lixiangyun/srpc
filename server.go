@@ -324,22 +324,31 @@ func SendProccess(conn net.Conn, s *Server, que chan RsponseBlock) {
 
 	defer s.wait.Done()
 
-	rsparray := make([]RsponseBlock, 20)
-	num := 0
+	rsparray := make([]RsponseBlock, 100)
 
 	for {
+
+		index := 0
+
 		rspblock := <-que
-		rsparray[num] = rspblock
+		rsparray[index] = rspblock
+		index++
 
-		num++
+		num := len(que)
+		if num > 50 {
+			num = 50
+		}
 
-		if num >= 20 {
-			err := SendRsponseBlock(conn, rsparray)
-			if err != nil {
-				log.Println(err.Error())
-				return
-			}
-			num = 0
+		for i := 0; i < num; i++ {
+			rspblock := <-que
+			rsparray[index] = rspblock
+			index++
+		}
+
+		err := SendRsponseBlock(conn, rsparray[0:index])
+		if err != nil {
+			log.Println(err.Error())
+			return
 		}
 	}
 }

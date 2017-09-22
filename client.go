@@ -151,22 +151,31 @@ func (n *Client) SendProccess() {
 
 	defer n.wait.Done()
 
-	reqarray := make([]RequestBlock, 20)
-	num := 0
+	reqarray := make([]RequestBlock, 100)
 
 	for {
+
+		index := 0
+
 		reqblock := <-n.ReqBlock
-		reqarray[num] = reqblock
+		reqarray[index] = reqblock
+		index++
 
-		num++
+		num := len(n.ReqBlock)
+		if num > 50 {
+			num = 50
+		}
 
-		if num >= 20 {
-			err := SendRequestBlock(n.socket, reqarray)
-			if err != nil {
-				log.Println(err.Error())
-				return
-			}
-			num = 0
+		for i := 0; i < num; i++ {
+			reqblock := <-n.ReqBlock
+			reqarray[index] = reqblock
+			index++
+		}
+
+		err := SendRequestBlock(n.socket, reqarray[0:index])
+		if err != nil {
+			log.Println(err.Error())
+			return
 		}
 	}
 }
