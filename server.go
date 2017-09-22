@@ -324,7 +324,7 @@ func SendProccess(conn net.Conn, s *Server, que chan RsponseBlock) {
 
 	defer s.wait.Done()
 
-	rsparray := make([]RsponseBlock, 100)
+	rsparray := make([]RsponseBlock, 1001)
 
 	for {
 
@@ -335,8 +335,8 @@ func SendProccess(conn net.Conn, s *Server, que chan RsponseBlock) {
 		index++
 
 		num := len(que)
-		if num > 50 {
-			num = 50
+		if num > 1000 {
+			num = 1000
 		}
 
 		for i := 0; i < num; i++ {
