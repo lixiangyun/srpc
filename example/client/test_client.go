@@ -92,7 +92,7 @@ func ClientAsync(addr string) {
 				return
 			}
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Second)
 	}
 
 	client.Delete()
