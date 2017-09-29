@@ -15,12 +15,11 @@ func Log(v ...interface{}) {
 }
 
 type Client struct {
-	Addr     string
-	MsgId    uint64
-	socket   net.Conn
-	Reply    chan Result
-	Sended   map[uint64]Result
-	ReqBlock chan RequestBlock
+	Addr   string
+	MsgId  uint64
+	socket net.Conn
+	Reply  chan Result
+	Sended map[uint64]Result
 
 	lock sync.Mutex
 	wait sync.WaitGroup
