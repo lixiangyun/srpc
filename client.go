@@ -3,59 +3,156 @@ package srpc
 import (
 	"errors"
 	"log"
-	"net"
 	"reflect"
-	"runtime/debug"
+	"srpc/comm"
 	"sync"
+	"sync/atomic"
 )
 
-func Log(v ...interface{}) {
-	log.Println(v)
-	log.Println(string(debug.Stack()))
-}
-
 type Client struct {
-	Addr   string
-	MsgId  uint64
-	socket net.Conn
-	Reply  chan Result
-	Sended map[uint64]Result
+	ReqID uint64
+	conn  *comm.Client
+
+	ReqMsg chan RequestMsg
+	RspMsg chan RspHeader
+
+	methodByName map[string]*MethodInfo
+	methodById   map[uint32]*MethodInfo
+
+	done chan bool
 
 	lock sync.Mutex
 	wait sync.WaitGroup
 }
 
+type RequestMsg struct {
+	msghead ReqHeader
+	result  Result
+}
+
 type Result struct {
-	Err   error
-	Req   interface{}
-	Rsp   interface{}
-	MsgId uint64
+	Err    error
+	Method string
+	Req    interface{}
+	Rsp    interface{}
+
+	Done chan *Result
+
+	rspmsg *RspHeader
+	reqmsg *ReqHeader
 }
 
 func NewClient(addr string) *Client {
 
-	var client = Client{Addr: addr}
+	c := new(Client)
+	c.conn = comm.NewClient(addr)
 
-	// 创建udp协议的socket服务
-	socket, err := net.Dial("tcp", addr)
-	if err != nil {
-		log.Println(err.Error())
-		return nil
-	}
+	c.ReqMsg = make(chan RequestMsg, 1000)
+	c.RspMsg = make(chan RspHeader, 1000)
 
-	client.ReqBlock = make(chan RequestBlock, 1000)
-	client.Reply = make(chan Result, 1000)
-	client.Sended = make(map[uint64]Result, 1000)
-	client.socket = socket
+	c.methodByName = make(map[string]*MethodInfo, 0)
+	c.methodById = make(map[uint32]*MethodInfo, 0)
 
-	client.wait.Add(2)
-	go client.AsyncProccess()
-	go client.SendProccess()
+	c.done = make(chan bool)
 
-	return &client
+	return c
 }
 
-func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
+func (c *Client) reqMsgProcess() {
+	defer c.wait.Done()
+
+	result := make(map[uint64]*Result, 100000)
+
+	for {
+
+		select {
+		case reqmsg := <-c.ReqMsg:
+			{
+				result[reqmsg.msghead.ReqID] = &reqmsg.result
+			}
+		case rspmsg := <-c.RspMsg:
+			{
+				temp, b := result[rspmsg.ReqID]
+				if b == false {
+					log.Println("drop error rsp!", rspmsg)
+					continue
+				}
+				delete(result, rspmsg.ReqID)
+
+				temp.msg = rspmsg
+				temp.Done <- temp
+			}
+		}
+
+	}
+}
+
+func (c *Client) rspMsgProcess(conn *comm.Client, reqid uint32, body []byte) {
+
+}
+
+func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) {
+
+	var functable MethodAll
+
+	functable.method = make([]MethodInfo, 0)
+
+	err := comm.DecodePacket(body, &functable)
+	if err != nil {
+		log.Println(err.Error())
+
+		c.done <- false
+		return
+	}
+
+	c.methodByName = make(map[string]*MethodInfo, functable.size)
+	c.methodById = make(map[uint32]*MethodInfo, functable.size)
+
+	for idx, vfun := range functable.method {
+		newfun := &(vfun)
+		c.methodByName[vfun.Name] = newfun
+		c.methodById[vfun.ID] = newfun
+
+		log.Println("sync method: ", *newfun)
+	}
+
+	c.done <- true
+}
+
+func (c *Client) Start(num int) error {
+
+	err := c.conn.RegHandler(0, c.rspMethodProcess)
+	if err != nil {
+		return err
+	}
+
+	err = c.conn.RegHandler(1, c.rspMsgProcess)
+	if err != nil {
+		return err
+	}
+
+	err = c.conn.Start(num)
+	if err != nil {
+		return err
+	}
+
+	err = c.conn.SendMsg(0, nil)
+	if err != nil {
+		return err
+	}
+
+	result := <-c.done
+	if result == false {
+		return errors.New("sync method failed!")
+	}
+
+	c.wait.Add(1)
+	go c.reqMsgProcess()
+
+	return nil
+}
+
+func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 
 	var err error
 
@@ -73,7 +170,7 @@ func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
 
 	rsponseValue = reflect.Indirect(rsponseValue)
 
-	n.MsgId++
+	ReqID := atomic.AddUint64(&c.ReqID, 1)
 
 	var reqblock RequestBlock
 	var rspblock RsponseBlock
@@ -88,8 +185,6 @@ func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
 		return err
 	}
 
-	//log.Println(reqblock)
-
 	// 序列化请求报文
 	newbuf, err := CodePacket(reqblock)
 	if err != nil {
@@ -98,15 +193,6 @@ func (n *Client) Call(method string, req interface{}, rsp interface{}) error {
 	}
 
 	err = FullyWrite(n.socket, newbuf)
-	if err != nil {
-		Log(err.Error())
-		return err
-	}
-
-	var buf [4096]byte
-
-	// 获取服务端应答报文
-	cnt, err := n.socket.Read(buf[0:])
 	if err != nil {
 		Log(err.Error())
 		return err
@@ -299,8 +385,7 @@ func (n *Client) CallAsync(method string, req interface{}, rsp interface{}) erro
 	return nil
 }
 
-func (n *Client) Delete() {
-	n.socket.Close()
-	//close(n.Reply)
-	n.wait.Wait()
+func (c *Client) Stop() {
+	c.conn.Stop()
+	c.wait.Wait()
 }
