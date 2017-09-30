@@ -83,9 +83,10 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) SendMsg(reqid uint32, body []byte) error {
-
+	if body == nil {
+		body = make([]byte, 0)
+	}
 	s.conn.sendbuf <- Header{ReqID: reqid, Body: body}
-
 	return nil
 }
 
