@@ -31,6 +31,11 @@ type MethodInfo struct {
 	Rsp  string
 }
 
+type MethodAll struct {
+	size   uint32
+	method []MethodInfo
+}
+
 type MethodRef struct {
 	ID        uint32
 	FuncValue reflect.Value
