@@ -74,6 +74,9 @@ func (c *Client) Stop() {
 }
 
 func (c *Client) SendMsg(reqid uint32, body []byte) error {
+	if body == nil {
+		body = make([]byte, 0)
+	}
 	c.conn.sendbuf <- Header{ReqID: reqid, Body: body}
 	return nil
 }
