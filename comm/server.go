@@ -21,13 +21,11 @@ type Listen struct {
 }
 
 func NewListen(addr string) *Listen {
-
 	listen, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Println(err.Error())
 		return nil
 	}
-
 	return &Listen{listen: listen}
 }
 
