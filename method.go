@@ -2,7 +2,6 @@ package srpc
 
 import (
 	"errors"
-	"log"
 	"sync"
 )
 
@@ -22,28 +21,28 @@ type Method struct {
 
 func NewMethod() *Method {
 	m := new(Method)
-	m.methodById = make(map[string]*MethodInfo, 100)
-	m.methodByName = make(map[uint32]*MethodInfo, 100)
+	m.methodById = make(map[uint32]*MethodInfo, 100)
+	m.methodByName = make(map[string]*MethodInfo, 100)
 	return m
 }
 
-func (m *Method) Add(name, req, rsp string) error {
+func (m *Method) Add(name, req, rsp string) (uint32, error) {
 	m.rwlock.Lock()
 	defer m.rwlock.Unlock()
 
 	_, b := m.methodByName[name]
 	if b == true {
-		return errors.New("method had been add.", name)
+		return 0, errors.New("method had been add.")
 	}
 
 	m.ID++
 
-	newmethod := &MethodInfo{Name: name, ID, m.ID, Req: req, Rsp: rsp}
+	newmethod := &MethodInfo{Name: name, ID: m.ID, Req: req, Rsp: rsp}
 
 	m.methodById[m.ID] = newmethod
 	m.methodByName[name] = newmethod
 
-	return nil
+	return m.ID, nil
 }
 
 func (m *Method) BatchAdd(method []MethodInfo) error {
@@ -53,7 +52,7 @@ func (m *Method) BatchAdd(method []MethodInfo) error {
 	for _, vfun := range method {
 		_, b := m.methodByName[vfun.Name]
 		if b == true {
-			return errors.New("method had been add.", vfun)
+			return errors.New("method had been add.")
 		}
 	}
 
@@ -73,11 +72,10 @@ func (m *Method) GetBatch() []MethodInfo {
 	m.rwlock.RLock()
 	defer m.rwlock.RUnlock()
 
-	len := len(m.methodByName)
-	functable := make([]MethodInfo, len)
+	functable := make([]MethodInfo, 0)
 
 	for idx, vfun := range m.methodByName {
-		functable[idx] = *vfun
+		functable = append(functable, *vfun)
 	}
 
 	return functable
@@ -87,23 +85,24 @@ func (m *Method) GetByName(name string) (MethodInfo, error) {
 	m.rwlock.RLock()
 	defer m.rwlock.RUnlock()
 
-	method, b := m.methodByName[name]
+	var method MethodInfo
+	vfun, b := m.methodByName[name]
 	if b == false {
-		return 0, errors.New("method not found.")
+		return method, errors.New("method not found.")
 	}
 
-	return *method, nil
+	return *vfun, nil
 }
 
-func (m *Method) GetByID(id uint32) MethodInfo {
+func (m *Method) GetByID(id uint32) (MethodInfo, error) {
 	m.rwlock.RLock()
 	defer m.rwlock.RUnlock()
 
-	method, b := m.methodById[id]
+	var method MethodInfo
+	vfun, b := m.methodById[id]
 	if b == false {
-		log.Println("method not found.", id)
-		return nil
+		return method, errors.New("method not found.")
 	}
 
-	return *method
+	return *vfun, nil
 }
