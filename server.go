@@ -1,7 +1,6 @@
 package srpc
 
 import (
-	"fmt"
 	"log"
 	"reflect"
 	"srpc/comm"
@@ -54,7 +53,7 @@ func NewServer(addr string) *Server {
 	return s
 }
 
-func (s *Server) RegMethod(pthis interface{}) error {
+func (s *Server) RegMethod(pthis interface{}) {
 
 	//创建反射变量，注意这里需要传入ruTest变量的地址；
 	//不传入地址就只能反射Routers静态定义的方法
@@ -75,7 +74,7 @@ func (s *Server) RegMethod(pthis interface{}) error {
 		fun.FuncValue = vfun.Method(i)
 		fun.FuncType = vfun.Method(i).Type()
 
-		funname := vtype.Method(i).Name
+		funname := fun.FuncType.String()
 
 		if fun.FuncType.NumIn() != 2 {
 			log.Printf("function %s (input parms %d) failed! \r\n",
@@ -106,14 +105,20 @@ func (s *Server) RegMethod(pthis interface{}) error {
 		fun.RspType = fun.RspType.Elem()
 
 		if fun.FuncType.Out(0).String() != "error" {
-			fmt.Printf("function %s (output type %s) failed! \r\n",
+			log.Printf("function %s (output type %s) failed! \r\n",
 				funname, fun.FuncType.Out(0).String())
 			continue
 		}
 
-		s.method[s.id] = fun
+		mid, err := s.functable.Add(fun.FuncType.String(), fun.ReqType.String(), fun.RspType.String())
+		if err != nil {
+			log.Println(err.Error())
+			continue
+		}
 
-		fmt.Println("Add Method: ",
+		s.funcvalue[mid] = fun
+
+		log.Println("Add Method: ",
 			funname, fun.ReqType.String(), fun.RspType.String())
 	}
 }
@@ -133,7 +138,7 @@ func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 	parms[0] = reflect.New(reqtype)
 	parms[1] = reflect.New(rsptype)
 
-	err = DecodePacket(req.Body, parms[0].Interface())
+	err = comm.DecodePacket(req.Body, parms[0].Interface())
 	if err != nil {
 		log.Println(err.Error())
 		return
