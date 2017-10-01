@@ -44,8 +44,8 @@ type Result struct {
 func NewClient(addr string) *Client {
 	c := new(Client)
 	c.conn = comm.NewClient(addr)
-	c.ReqQue = make(chan Request, 1000)
-	c.RspQue = make(chan Rsponse, 1000)
+	c.ReqQue = make(chan *Request, 1000)
+	c.RspQue = make(chan *Rsponse, 1000)
 	c.functable = NewMethod()
 	c.done = make(chan bool)
 	return c
@@ -140,28 +140,51 @@ func (c *Client) Start(num int) error {
 
 func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 
+	return nil
+}
+
+func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done chan *Result) chan *Result {
+
+	if done == nil {
+		log.Println("input error!")
+		return nil
+	}
+
+	result := new(Result)
+	result.Method = method
+	result.Done = done
+	result.Req = req
+	result.Rsp = rsp
+
+	defer func() {
+		done <- result
+	}()
+
 	reqvalue := reflect.ValueOf(req)
 	rspvalue := reflect.ValueOf(rsp)
 
 	if reqvalue.Kind() == reflect.Ptr {
-		return errors.New("parm req is ptr type!")
+		result.Err = errors.New("parm req is ptr type!")
+		return done
 	}
 
 	if rspvalue.Kind() != reflect.Ptr {
-		return errors.New("parm rsp is'nt ptr type!")
+		result.Err = errors.New("parm rsp is'nt ptr type!")
+		return done
 	}
 	rspvalue = reflect.Indirect(rspvalue)
 
 	funcinfo, err := c.functable.GetByName(method)
 	if err != nil {
-		return
+		result.Err = err
+		return done
 	}
 
 	if funcinfo.Name != method ||
 		funcinfo.Req != reqvalue.Type().String() ||
 		funcinfo.Rsp != rspvalue.Type().String() {
-
-		return errors.New("method type not match!", funcinfo)
+		result.Err = errors.New("method type not match!")
+		return done
 	}
 
 	reqblock := new(Request)
@@ -169,119 +192,14 @@ func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 	reqblock.msg.MethodID = funcinfo.ID
 	reqblock.msg.Body, err = comm.CodePacket(req)
 	if err != nil {
-		log.Println(err.Error())
-		return err
+		result.Err = err
+		return done
 	}
-	reqblock.result = new(Result)
-	reqblock.result.Done = make(chan *Result)
-	reqblock.result.Req = req
-	reqblock.result.Rsp = rsp
-	reqblock.result.Method = method
+	reqblock.result = result
 
 	c.ReqQue <- reqblock
 
-	result := <-reqblock.result.Done
-
-	var reqblock RequestBlock
-	var rspblock RsponseBlock
-
-	reqblock.Method = method
-	reqblock.MsgId = n.MsgId
-	reqblock.Parms[0] = requestValue.Type().String()
-	reqblock.Parms[1] = rsponseValue.Type().String()
-
-	reqblock.Body, err = CodePacket(req)
-
-	// 序列化请求报文
-	newbuf, err := CodePacket(reqblock)
-	if err != nil {
-		log.Println(err.Error())
-		return err
-	}
-
-	err = FullyWrite(n.socket, newbuf)
-	if err != nil {
-		log.Println(err.Error())
-		return err
-	}
-
-	// 反序列化报文
-	err = comm.DecodePacket(buf[0:cnt], &rspblock)
-	if err != nil {
-		log.Println(err.Error())
-		return err
-	}
-
-	//log.Println(rspblock)
-
-	// 校验请求的序号是否一致
-	if rspblock.MsgId != reqblock.MsgId {
-		err = errors.New("recv a bad packet ")
-		log.Println(err.Error())
-		return err
-	}
-
-	// 反序列化报文
-	err = comm.DecodePacket(rspblock.Body, rsp)
-	if err != nil {
-		log.Println(err.Error())
-		return err
-	}
-
-	if rspblock.Result != "success" {
-		return errors.New(rspblock.Result)
-	}
-
-	return nil
-}
-
-func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done chan *Result) (chan *Result, error) {
-
-	var err error
-	requestValue := reflect.ValueOf(req)
-	rsponseValue := reflect.ValueOf(rsp)
-
-	// 校验参数合法性，req必须是非指针类型，rsp必须是指针类型
-	if rsponseValue.Kind() != reflect.Ptr {
-		return nil, errors.New("parm rsp is'nt ptr type!")
-	}
-
-	if requestValue.Kind() == reflect.Ptr {
-		return nil, errors.New("parm req is ptr type!")
-	}
-
-	rsponseValue = reflect.Indirect(rsponseValue)
-
-	ReqID := atomic.AddUint64(&c.ReqID, 1)
-
-	var reqblock RequestBlock
-
-	reqblock.Method = method
-	reqblock.MsgId = n.MsgId
-	reqblock.Parms[0] = requestValue.Type().String()
-	reqblock.Parms[1] = rsponseValue.Type().String()
-	reqblock.Body, err = CodePacket(req)
-	if err != nil {
-		Log(err.Error())
-		return err
-	}
-
-	var result Result
-
-	result.Err = nil
-	result.Req = req
-	result.Rsp = rsp
-	result.MsgId = reqblock.MsgId
-
-	n.lock.Lock()
-	n.Sended[reqblock.MsgId] = result
-	n.lock.Unlock()
-
-	//log.Println(reqblock)
-
-	n.ReqBlock <- reqblock
-
-	return nil
+	return done
 }
 
 func (c *Client) Stop() {
