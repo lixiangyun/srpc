@@ -1,43 +1,35 @@
 package srpc
 
 import (
-	"errors"
 	"fmt"
 	"log"
-	"net"
 	"reflect"
 	"srpc/comm"
 	"sync"
 )
 
+const (
+	SRPC_SYNC_METHOD = 0
+	SRPC_CALL_METHOD = 1
+)
+
 type ReqHeader struct {
 	ReqID    uint64
 	MethodID uint32
-	BodySize uint32
 	Body     []byte
 }
 
 type RspHeader struct {
-	ReqID    uint64
-	ErrNo    uint32
-	BodySize uint32
-	Body     []byte
-}
-
-type MethodInfo struct {
-	ID   uint32
-	Name string
-	Req  string
-	Rsp  string
+	ReqID uint64
+	ErrNo uint32
+	Body  []byte
 }
 
 type MethodAll struct {
-	size   uint32
 	method []MethodInfo
 }
 
-type MethodRef struct {
-	ID        uint32
+type MethodValue struct {
 	FuncValue reflect.Value
 	FuncType  reflect.Type
 	ReqType   reflect.Type
@@ -45,23 +37,20 @@ type MethodRef struct {
 }
 
 type Server struct {
-	id     uint32
-	method map[uint32]MethodRef
-	rwlock sync.RWMutex
-	lis    *comm.Listen
+	functable *Method
+	funcvalue map[uint32]MethodValue
+	rwlock    sync.RWMutex
+	lis       *comm.Listen
 }
 
 func NewServer(addr string) *Server {
-
 	s := new(Server)
-
 	s.lis = comm.NewListen(addr)
 	if s.lis == nil {
 		return nil
 	}
-
-	s.method = make(map[uint32]MethodRef, 100)
-
+	s.funcvalue = make(map[uint32]MethodValue, 100)
+	s.functable = NewMethod()
 	return s
 }
 
@@ -75,12 +64,13 @@ func (s *Server) RegMethod(pthis interface{}) error {
 
 	//读取方法数量
 	num := vfun.NumMethod()
-	fmt.Println("Total Method Num :", num)
+
+	log.Println("Method Num:", num)
 
 	//遍历路由器的方法，并将其存入控制器映射变量中
 	for i := 0; i < num; i++ {
 
-		var fun MethodRef
+		var fun MethodValue
 
 		fun.FuncValue = vfun.Method(i)
 		fun.FuncType = vfun.Method(i).Type()
@@ -128,121 +118,74 @@ func (s *Server) RegMethod(pthis interface{}) error {
 	}
 }
 
-func (s *Server) CallMethod(reqblock RequestBlock) (rspblock RsponseBlock, err error) {
+func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 
-	funcinfo, b := s.symbol[reqblock.Method]
+	funcvalue, b := s.funcvalue[req.MethodID]
 	if b == false {
-		err = errors.New("can not found method : " + reqblock.Method)
+		log.Println("method is exist!", req)
 		return
 	}
 
-	for i := 0; i < 2; i++ {
-		if reqblock.Parms[i] != funcinfo.input[i].String() {
-			errs := fmt.Sprintf("MatchMethod parm(%d) type not match : %s -> %s \r\n",
-				i, reqblock.Parms[i], funcinfo.input[i].String())
-			err = errors.New(errs)
-			return
-		}
-	}
-
-	parmtype := funcinfo.input[0:]
+	reqtype := funcvalue.ReqType
+	rsptype := funcvalue.RspType
 
 	var parms [2]reflect.Value
+	parms[0] = reflect.New(reqtype)
+	parms[1] = reflect.New(rsptype)
 
-	parms[0] = reflect.New(parmtype[0])
-	parms[1] = reflect.New(parmtype[1])
-
-	err = DecodePacket(reqblock.Body, parms[0].Interface())
+	err = DecodePacket(req.Body, parms[0].Interface())
 	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+	parms[0] = reflect.Indirect(parms[0])
+
+	output := funcvalue.FuncValue.Call(parms[0:])
+
+	if output[0].Type().Name() != "error" {
+		log.Println("return value type invaild!")
 		return
 	}
 
-	var input [2]reflect.Value
-
-	input[0] = reflect.Indirect(parms[0])
-	input[1] = parms[1]
-
-	output := funcinfo.function.Call(input[0:])
-
-	if output[0].Type().Name() == "error" {
-		i := output[0].Interface()
-		if i != nil {
-			rspblock.Result = i.(error).Error()
-		}
+	value := output[0].Interface()
+	if value != nil {
+		rsp.ErrNo = 1
+		rsp.ReqID = req.ReqID
+		rsp.Body, err = comm.CodePacket(value)
 	} else {
-		rspblock.Result = "success"
+		rsp.ErrNo = 0
+		rsp.ReqID = req.ReqID
+		rsp.Body, err = comm.CodePacket(reflect.Indirect(parms[1]).Interface())
 	}
 
-	rspblock.MsgId = reqblock.MsgId
-	rspblock.Method = reqblock.Method
-
-	rspblock.Body, err = CodePacket(reflect.Indirect(parms[1]).Interface())
 	if err != nil {
+		log.Println(err.Error())
 		return
 	}
 
 	return
 }
 
-func SendProccess(conn net.Conn, s *Server, que chan RsponseBlock) {
+func (c *Server) reqMsgProcess(conn *comm.Server, reqid uint32, body []byte) {
 
-	defer s.wait.Done()
+}
 
-	rsparray := make([]RsponseBlock, 1001)
+func (c *Server) reqMethodProcess(conn *comm.Server, reqid uint32, body []byte) {
+
+}
+
+func (s *Server) Start() {
 
 	for {
-
-		index := 0
-
-		rspblock := <-que
-		rsparray[index] = rspblock
-		index++
-
-		num := len(que)
-		if num > 1000 {
-			num = 1000
-		}
-
-		for i := 0; i < num; i++ {
-			rspblock := <-que
-			rsparray[index] = rspblock
-			index++
-		}
-
-		err := SendRsponseBlock(conn, rsparray[0:index])
+		comm, err := s.lis.Accept()
 		if err != nil {
 			log.Println(err.Error())
 			return
 		}
+
+		comm.RegHandler(SRPC_SYNC_METHOD, s.reqMethodProcess)
+		comm.RegHandler(SRPC_CALL_METHOD, s.reqMsgProcess)
+
+		comm.Start(2)
 	}
-}
-
-func (s *Server) Start() error {
-
-	listen, err := net.Listen("tcp", s.Addr)
-	if err != nil {
-		fmt.Println(err.Error())
-		return err
-	}
-
-	go func() {
-		for {
-			rspque := make(chan RsponseBlock, 1000)
-			conn, err2 := listen.Accept()
-			if err2 != nil {
-				fmt.Println(err.Error())
-				continue
-			}
-			s.wait.Add(2)
-			go MsgProcess(conn, s, rspque)
-			go SendProccess(conn, s, rspque)
-		}
-	}()
-
-	return nil
-}
-
-func (s *Server) Stop() {
-	s.wait.Wait()
-	fmt.Println("close!")
 }
