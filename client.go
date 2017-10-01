@@ -13,21 +13,24 @@ type Client struct {
 	ReqID uint64
 	conn  *comm.Client
 
-	ReqMsg chan RequestMsg
-	RspMsg chan RspHeader
+	ReqQue chan *Request
+	RspQue chan *Rsponse
 
-	methodByName map[string]*MethodInfo
-	methodById   map[uint32]*MethodInfo
+	functable *Method
 
 	done chan bool
 
-	lock sync.Mutex
 	wait sync.WaitGroup
 }
 
-type RequestMsg struct {
-	msghead ReqHeader
-	result  Result
+type Request struct {
+	msg    ReqHeader
+	result *Result
+}
+
+type Rsponse struct {
+	msg    RspHeader
+	result *Result
 }
 
 type Result struct {
@@ -35,26 +38,16 @@ type Result struct {
 	Method string
 	Req    interface{}
 	Rsp    interface{}
-
-	Done chan *Result
-
-	rspmsg *RspHeader
-	reqmsg *ReqHeader
+	Done   chan *Result
 }
 
 func NewClient(addr string) *Client {
-
 	c := new(Client)
 	c.conn = comm.NewClient(addr)
-
-	c.ReqMsg = make(chan RequestMsg, 1000)
-	c.RspMsg = make(chan RspHeader, 1000)
-
-	c.methodByName = make(map[string]*MethodInfo, 0)
-	c.methodById = make(map[uint32]*MethodInfo, 0)
-
+	c.ReqQue = make(chan Request, 1000)
+	c.RspQue = make(chan Rsponse, 1000)
+	c.functable = NewMethod()
 	c.done = make(chan bool)
-
 	return c
 }
 
@@ -66,24 +59,23 @@ func (c *Client) reqMsgProcess() {
 	for {
 
 		select {
-		case reqmsg := <-c.ReqMsg:
+		case reqmsg := <-c.ReqQue:
 			{
-				result[reqmsg.msghead.ReqID] = &reqmsg.result
+				result[reqmsg.msg.ReqID] = reqmsg.result
 			}
-		case rspmsg := <-c.RspMsg:
+		case rspmsg := <-c.RspQue:
 			{
-				temp, b := result[rspmsg.ReqID]
+				temp, b := result[rspmsg.msg.ReqID]
 				if b == false {
 					log.Println("drop error rsp!", rspmsg)
 					continue
 				}
-				delete(result, rspmsg.ReqID)
+				delete(result, rspmsg.msg.ReqID)
 
-				temp.msg = rspmsg
-				temp.Done <- temp
+				//temp.msg = rspmsg
+				//temp.Done <- temp
 			}
 		}
-
 	}
 }
 
@@ -94,26 +86,20 @@ func (c *Client) rspMsgProcess(conn *comm.Client, reqid uint32, body []byte) {
 func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) {
 
 	var functable MethodAll
-
 	functable.method = make([]MethodInfo, 0)
 
 	err := comm.DecodePacket(body, &functable)
 	if err != nil {
 		log.Println(err.Error())
-
 		c.done <- false
 		return
 	}
 
-	c.methodByName = make(map[string]*MethodInfo, functable.size)
-	c.methodById = make(map[uint32]*MethodInfo, functable.size)
-
-	for idx, vfun := range functable.method {
-		newfun := &(vfun)
-		c.methodByName[vfun.Name] = newfun
-		c.methodById[vfun.ID] = newfun
-
-		log.Println("sync method: ", *newfun)
+	err = c.functable.BatchAdd(functable.method)
+	if err != nil {
+		log.Println(err.Error())
+		c.done <- false
+		return
 	}
 
 	c.done <- true
@@ -121,12 +107,12 @@ func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) 
 
 func (c *Client) Start(num int) error {
 
-	err := c.conn.RegHandler(0, c.rspMethodProcess)
+	err := c.conn.RegHandler(SRPC_SYNC_METHOD, c.rspMethodProcess)
 	if err != nil {
 		return err
 	}
 
-	err = c.conn.RegHandler(1, c.rspMsgProcess)
+	err = c.conn.RegHandler(SRPC_CALL_METHOD, c.rspMsgProcess)
 	if err != nil {
 		return err
 	}
@@ -141,8 +127,8 @@ func (c *Client) Start(num int) error {
 		return err
 	}
 
-	result := <-c.done
-	if result == false {
+	b := <-c.done
+	if b == false {
 		return errors.New("sync method failed!")
 	}
 
@@ -154,23 +140,47 @@ func (c *Client) Start(num int) error {
 
 func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 
-	var err error
+	reqvalue := reflect.ValueOf(req)
+	rspvalue := reflect.ValueOf(rsp)
 
-	requestValue := reflect.ValueOf(req)
-	rsponseValue := reflect.ValueOf(rsp)
-
-	// 校验参数合法性，req必须是非指针类型，rsp必须是指针类型
-	if rsponseValue.Kind() != reflect.Ptr {
-		return errors.New("parm rsp is'nt ptr type!")
-	}
-
-	if requestValue.Kind() == reflect.Ptr {
+	if reqvalue.Kind() == reflect.Ptr {
 		return errors.New("parm req is ptr type!")
 	}
 
-	rsponseValue = reflect.Indirect(rsponseValue)
+	if rspvalue.Kind() != reflect.Ptr {
+		return errors.New("parm rsp is'nt ptr type!")
+	}
+	rspvalue = reflect.Indirect(rspvalue)
 
-	ReqID := atomic.AddUint64(&c.ReqID, 1)
+	funcinfo, err := c.functable.GetByName(method)
+	if err != nil {
+		return
+	}
+
+	if funcinfo.Name != method ||
+		funcinfo.Req != reqvalue.Type().String() ||
+		funcinfo.Rsp != rspvalue.Type().String() {
+
+		return errors.New("method type not match!", funcinfo)
+	}
+
+	reqblock := new(Request)
+	reqblock.msg.ReqID = atomic.AddUint64(&c.ReqID, 1)
+	reqblock.msg.MethodID = funcinfo.ID
+	reqblock.msg.Body, err = comm.CodePacket(req)
+	if err != nil {
+		log.Println(err.Error())
+		return err
+	}
+	reqblock.result = new(Result)
+	reqblock.result.Done = make(chan *Result)
+	reqblock.result.Req = req
+	reqblock.result.Rsp = rsp
+	reqblock.result.Method = method
+
+	c.ReqQue <- reqblock
+
+	result := <-reqblock.result.Done
 
 	var reqblock RequestBlock
 	var rspblock RsponseBlock
@@ -179,29 +189,26 @@ func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 	reqblock.MsgId = n.MsgId
 	reqblock.Parms[0] = requestValue.Type().String()
 	reqblock.Parms[1] = rsponseValue.Type().String()
+
 	reqblock.Body, err = CodePacket(req)
-	if err != nil {
-		Log(err.Error())
-		return err
-	}
 
 	// 序列化请求报文
 	newbuf, err := CodePacket(reqblock)
 	if err != nil {
-		Log(err.Error())
+		log.Println(err.Error())
 		return err
 	}
 
 	err = FullyWrite(n.socket, newbuf)
 	if err != nil {
-		Log(err.Error())
+		log.Println(err.Error())
 		return err
 	}
 
 	// 反序列化报文
-	err = DecodePacket(buf[0:cnt], &rspblock)
+	err = comm.DecodePacket(buf[0:cnt], &rspblock)
 	if err != nil {
-		Log(err.Error())
+		log.Println(err.Error())
 		return err
 	}
 
@@ -210,14 +217,14 @@ func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 	// 校验请求的序号是否一致
 	if rspblock.MsgId != reqblock.MsgId {
 		err = errors.New("recv a bad packet ")
-		Log(err.Error())
+		log.Println(err.Error())
 		return err
 	}
 
 	// 反序列化报文
-	err = DecodePacket(rspblock.Body, rsp)
+	err = comm.DecodePacket(rspblock.Body, rsp)
 	if err != nil {
-		Log(err.Error())
+		log.Println(err.Error())
 		return err
 	}
 
@@ -228,115 +235,7 @@ func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 	return nil
 }
 
-func (n *Client) GetRelay() chan Result {
-	return n.Reply
-}
-
-func (n *Client) SendProccess() {
-
-	defer n.wait.Done()
-
-	reqarray := make([]RequestBlock, 1001)
-
-	for {
-
-		index := 0
-
-		reqblock := <-n.ReqBlock
-		reqarray[index] = reqblock
-		index++
-
-		num := len(n.ReqBlock)
-		if num > 1000 {
-			num = 1000
-		}
-
-		for i := 0; i < num; i++ {
-			reqblock := <-n.ReqBlock
-			reqarray[index] = reqblock
-			index++
-		}
-
-		err := SendRequestBlock(n.socket, reqarray[0:index])
-		if err != nil {
-			log.Println(err.Error())
-			return
-		}
-	}
-}
-
-func (n *Client) AsyncProccess() {
-
-	defer n.wait.Done()
-
-	var buf [4096]byte
-	var tmpbuf [4096]byte
-	length := 0
-
-	for {
-
-		// 获取服务端应答报文
-		cnt, err := n.socket.Read(buf[length:])
-		if err != nil {
-			log.Println(err.Error())
-			return
-		}
-
-		length += cnt
-
-		for {
-
-			if length == 0 {
-				break
-			}
-
-			index := SliceCheck(buf[0:length])
-			if -1 == index {
-				break
-			}
-
-			copy(tmpbuf[0:], buf[0:index])
-
-			if index+4 >= length {
-				length = 0
-
-			} else {
-				copy(buf[0:], buf[index+4:length])
-				length = length - (index + 4)
-			}
-
-			var rspblock RsponseBlock
-
-			// 反序列化报文
-			err = DecodePacket(tmpbuf[0:index], &rspblock)
-			if err != nil {
-				Log(err.Error())
-				continue
-			}
-
-			n.lock.Lock()
-			result, b := n.Sended[rspblock.MsgId]
-			if b == false {
-				n.lock.Unlock()
-				Log("can not found this msgid!", rspblock.MsgId)
-				continue
-			}
-			delete(n.Sended, rspblock.MsgId)
-			n.lock.Unlock()
-
-			// 反序列化报文
-			err = DecodePacket(rspblock.Body, result.Rsp)
-			if err != nil {
-				Log(err.Error())
-				continue
-			}
-
-			n.Reply <- result
-		}
-	}
-}
-
-func (n *Client) CallAsync(method string, req interface{}, rsp interface{}) error {
+func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done chan *Result) (chan *Result, error) {
 
 	var err error
 	requestValue := reflect.ValueOf(req)
@@ -344,16 +243,16 @@ func (n *Client) CallAsync(method string, req interface{}, rsp interface{}) erro
 
 	// 校验参数合法性，req必须是非指针类型，rsp必须是指针类型
 	if rsponseValue.Kind() != reflect.Ptr {
-		return errors.New("parm rsp is'nt ptr type!")
+		return nil, errors.New("parm rsp is'nt ptr type!")
 	}
 
 	if requestValue.Kind() == reflect.Ptr {
-		return errors.New("parm req is ptr type!")
+		return nil, errors.New("parm req is ptr type!")
 	}
 
 	rsponseValue = reflect.Indirect(rsponseValue)
 
-	n.MsgId++
+	ReqID := atomic.AddUint64(&c.ReqID, 1)
 
 	var reqblock RequestBlock
 
