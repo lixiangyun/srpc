@@ -57,8 +57,10 @@ func (m *Method) BatchAdd(method []MethodInfo) error {
 	}
 
 	for _, vfun := range method {
-		m.methodByName[vfun.Name] = &vfun
-		m.methodById[vfun.ID] = &vfun
+
+		newmethod := vfun
+		m.methodByName[vfun.Name] = &newmethod
+		m.methodById[vfun.ID] = &newmethod
 
 		if vfun.ID > m.ID {
 			m.ID = vfun.ID
@@ -74,7 +76,7 @@ func (m *Method) GetBatch() []MethodInfo {
 
 	functable := make([]MethodInfo, 0)
 
-	for idx, vfun := range m.methodByName {
+	for _, vfun := range m.methodByName {
 		functable = append(functable, *vfun)
 	}
 
