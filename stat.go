@@ -18,3 +18,9 @@ var stat Stat
 func GetStat() Stat {
 	return stat
 }
+
+func StatAdd(recv, send, err int64) {
+	stat.RecvCnt += recv
+	stat.SendCnt += send
+	stat.ErrCnt += err
+}
