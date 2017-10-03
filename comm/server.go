@@ -21,11 +21,13 @@ type Listen struct {
 }
 
 func NewListen(addr string) *Listen {
+
 	listen, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Println(err.Error())
 		return nil
 	}
+
 	return &Listen{listen: listen}
 }
 
@@ -81,10 +83,15 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) SendMsg(reqid uint32, body []byte) error {
-	if body == nil {
-		body = make([]byte, 0)
-	}
-	s.conn.sendbuf <- Header{ReqID: reqid, Body: body}
+
+	var msg Header
+
+	msg.ReqID = reqid
+	msg.Body = make([]byte, len(body))
+	copy(msg.Body, body)
+
+	s.conn.sendbuf <- msg
+
 	return nil
 }
 
