@@ -29,8 +29,7 @@ type Request struct {
 }
 
 type Rsponse struct {
-	msg    RspHeader
-	result *Result
+	msg RspHeader
 }
 
 type Result struct {
@@ -54,26 +53,59 @@ func NewClient(addr string) *Client {
 func (c *Client) reqMsgProcess() {
 	defer c.wait.Done()
 
-	result := make(map[uint64]*Result, 100000)
+	resultTable := make(map[uint64]*Result, 10000)
 
 	for {
 
 		select {
 		case reqmsg := <-c.ReqQue:
 			{
-				result[reqmsg.msg.ReqID] = reqmsg.result
+				//log.Println("ReqMsg: ", reqmsg.msg)
+
+				_, b := resultTable[reqmsg.msg.ReqID]
+				if b == true {
+					log.Println("double reqID !", reqmsg)
+					continue
+				}
+				resultTable[reqmsg.msg.ReqID] = reqmsg.result
+
+				body := make([]byte, 12+len(reqmsg.msg.Body))
+				comm.PutUint64(reqmsg.msg.ReqID, body)
+				comm.PutUint32(reqmsg.msg.MethodID, body[8:])
+				copy(body[12:], reqmsg.msg.Body)
+
+				c.conn.SendMsg(SRPC_CALL_METHOD, body)
 			}
 		case rspmsg := <-c.RspQue:
 			{
-				temp, b := result[rspmsg.msg.ReqID]
+				var err error
+
+				//log.Println("RspMsg: ", rspmsg.msg)
+
+				result, b := resultTable[rspmsg.msg.ReqID]
 				if b == false {
 					log.Println("drop error rsp!", rspmsg)
 					continue
 				}
-				delete(result, rspmsg.msg.ReqID)
+				delete(resultTable, rspmsg.msg.ReqID)
 
-				//temp.msg = rspmsg
-				//temp.Done <- temp
+				if rspmsg.msg.ErrNo == 0 {
+					err = comm.DecodePacket(rspmsg.msg.Body, result.Rsp)
+				} else {
+					err = comm.DecodePacket(rspmsg.msg.Body, &result.Err)
+				}
+
+				if err != nil {
+					log.Println(err.Error())
+					continue
+				}
+
+				result.Done <- result
+			}
+		case <-c.done:
+			{
+				log.Println("msg proc shutdown!")
+				return
 			}
 		}
 	}
@@ -81,12 +113,20 @@ func (c *Client) reqMsgProcess() {
 
 func (c *Client) rspMsgProcess(conn *comm.Client, reqid uint32, body []byte) {
 
+	rsp := new(Rsponse)
+	rsp.msg.ReqID = comm.GetUint64(body)
+	rsp.msg.ErrNo = comm.GetUint32(body[8:])
+	rsp.msg.Body = body[12:]
+
+	//log.Println("recv: ", rsp.msg)
+
+	c.RspQue <- rsp
 }
 
 func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) {
 
 	var functable MethodAll
-	functable.method = make([]MethodInfo, 0)
+	functable.Method = make([]MethodInfo, 0)
 
 	err := comm.DecodePacket(body, &functable)
 	if err != nil {
@@ -95,11 +135,15 @@ func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) 
 		return
 	}
 
-	err = c.functable.BatchAdd(functable.method)
+	err = c.functable.BatchAdd(functable.Method)
 	if err != nil {
 		log.Println(err.Error())
 		c.done <- false
 		return
+	}
+
+	for _, vfun := range functable.Method {
+		log.Println("Sync Method: ", vfun)
 	}
 
 	c.done <- true
@@ -122,7 +166,7 @@ func (c *Client) Start(num int) error {
 		return err
 	}
 
-	err = c.conn.SendMsg(0, nil)
+	err = c.conn.SendMsg(SRPC_SYNC_METHOD, nil)
 	if err != nil {
 		return err
 	}
@@ -140,6 +184,15 @@ func (c *Client) Start(num int) error {
 
 func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 
+	done := make(chan *Result)
+
+	c.CallAsync(method, req, rsp, done)
+	result := <-done
+
+	if result.Err != nil {
+		return result.Err
+	}
+
 	return nil
 }
 
@@ -156,20 +209,18 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 	result.Req = req
 	result.Rsp = rsp
 
-	defer func() {
-		done <- result
-	}()
-
 	reqvalue := reflect.ValueOf(req)
 	rspvalue := reflect.ValueOf(rsp)
 
 	if reqvalue.Kind() == reflect.Ptr {
 		result.Err = errors.New("parm req is ptr type!")
+		done <- result
 		return done
 	}
 
 	if rspvalue.Kind() != reflect.Ptr {
 		result.Err = errors.New("parm rsp is'nt ptr type!")
+		done <- result
 		return done
 	}
 	rspvalue = reflect.Indirect(rspvalue)
@@ -177,6 +228,7 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 	funcinfo, err := c.functable.GetByName(method)
 	if err != nil {
 		result.Err = err
+		done <- result
 		return done
 	}
 
@@ -184,6 +236,11 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 		funcinfo.Req != reqvalue.Type().String() ||
 		funcinfo.Rsp != rspvalue.Type().String() {
 		result.Err = errors.New("method type not match!")
+
+		log.Println("funcinfo : ", funcinfo)
+		log.Println("method : ", method, reqvalue.Type().String(), rspvalue.Type().String())
+
+		done <- result
 		return done
 	}
 
@@ -193,10 +250,12 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 	reqblock.msg.Body, err = comm.CodePacket(req)
 	if err != nil {
 		result.Err = err
+		done <- result
+
 		return done
 	}
-	reqblock.result = result
 
+	reqblock.result = result
 	c.ReqQue <- reqblock
 
 	return done
@@ -204,5 +263,7 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 
 func (c *Client) Stop() {
 	c.conn.Stop()
+	c.done <- true
 	c.wait.Wait()
+	log.Println("client shut down!")
 }
