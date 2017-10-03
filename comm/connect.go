@@ -65,13 +65,15 @@ func (c *connect) sendtask() {
 		var buflen int
 
 		msg := <-c.sendbuf
-		tmpbuf := make([]byte, MSG_HEAD_LEN)
+
+		size := len(msg.Body)
+		tmpbuf := make([]byte, MSG_HEAD_LEN+size)
 
 		PutUint32(MAGIC_FLAG, tmpbuf[0:])
 		PutUint32(msg.ReqID, tmpbuf[4:])
-		PutUint32(uint32(len(msg.Body)), tmpbuf[8:])
+		PutUint32(uint32(size), tmpbuf[8:])
+		copy(tmpbuf[12:], msg.Body)
 
-		tmpbuf = append(tmpbuf, msg.Body...)
 		tmpbuflen := len(tmpbuf)
 
 		if tmpbuflen >= MAX_BUF_SIZE/2 {
@@ -90,13 +92,15 @@ func (c *connect) sendtask() {
 		for i := 0; i < chanlen; i++ {
 
 			msg = <-c.sendbuf
-			tmpbuf = make([]byte, MSG_HEAD_LEN)
+
+			size = len(msg.Body)
+			tmpbuf = make([]byte, MSG_HEAD_LEN+size)
 
 			PutUint32(MAGIC_FLAG, tmpbuf[0:])
 			PutUint32(msg.ReqID, tmpbuf[4:])
-			PutUint32(uint32(len(msg.Body)), tmpbuf[8:])
+			PutUint32(uint32(size), tmpbuf[8:])
+			copy(tmpbuf[12:], msg.Body)
 
-			tmpbuf = append(tmpbuf, msg.Body...)
 			tmpbuflen = len(tmpbuf)
 
 			copy(buf[buflen:buflen+tmpbuflen], tmpbuf[0:])
@@ -179,7 +183,13 @@ func (c *connect) recvtask() {
 				break
 			}
 
-			c.recvbuf <- Header{ReqID: msg.ReqID, Body: buf[bodybegin:bodyend]}
+			var tempmsg Header
+
+			tempmsg.ReqID = msg.ReqID
+			tempmsg.Body = make([]byte, len(buf[bodybegin:bodyend]))
+			copy(tempmsg.Body, buf[bodybegin:bodyend])
+
+			c.recvbuf <- tempmsg
 
 			lastindex = bodyend
 		}
