@@ -25,7 +25,7 @@ type RspHeader struct {
 }
 
 type MethodAll struct {
-	method []MethodInfo
+	Method []MethodInfo
 }
 
 type MethodValue struct {
@@ -74,7 +74,7 @@ func (s *Server) RegMethod(pthis interface{}) {
 		fun.FuncValue = vfun.Method(i)
 		fun.FuncType = vfun.Method(i).Type()
 
-		funname := fun.FuncType.String()
+		funname := vtype.Method(i).Name
 
 		if fun.FuncType.NumIn() != 2 {
 			log.Printf("function %s (input parms %d) failed! \r\n",
@@ -110,7 +110,7 @@ func (s *Server) RegMethod(pthis interface{}) {
 			continue
 		}
 
-		mid, err := s.functable.Add(fun.FuncType.String(), fun.ReqType.String(), fun.RspType.String())
+		mid, err := s.functable.Add(funname, fun.ReqType.String(), fun.RspType.String())
 		if err != nil {
 			log.Println(err.Error())
 			continue
@@ -172,11 +172,57 @@ func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 }
 
 func (c *Server) reqMsgProcess(conn *comm.Server, reqid uint32, body []byte) {
+	var req ReqHeader
 
+	req.ReqID = comm.GetUint64(body)
+	req.MethodID = comm.GetUint32(body[8:])
+	req.Body = body[12:]
+
+	//log.Println("recv req: ", req)
+
+	rsp, err := c.CallMethod(req)
+	if err != nil {
+		log.Println(err.Error())
+
+		StatAdd(1, 0, 1)
+		return
+	}
+
+	body = make([]byte, 12+len(rsp.Body))
+	comm.PutUint64(rsp.ReqID, body)
+	comm.PutUint32(rsp.ErrNo, body[8:])
+	copy(body[12:], rsp.Body)
+
+	err = conn.SendMsg(SRPC_CALL_METHOD, body)
+	if err != nil {
+		log.Println(err.Error())
+
+		StatAdd(1, 0, 1)
+		return
+	}
+
+	StatAdd(1, 1, 0)
+
+	//log.Println("send rsp: ", rsp)
 }
 
 func (c *Server) reqMethodProcess(conn *comm.Server, reqid uint32, body []byte) {
 
+	var rspmethod MethodAll
+
+	rspmethod.Method = c.functable.GetBatch()
+
+	body, err := comm.CodePacket(rspmethod)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+
+	err = conn.SendMsg(SRPC_SYNC_METHOD, body)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
 }
 
 func (s *Server) Start() {
