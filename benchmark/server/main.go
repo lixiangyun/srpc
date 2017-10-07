@@ -48,11 +48,6 @@ func Server(addr string) {
 
 	s.tmp = 100
 
-	cpunum := runtime.NumCPU()
-	runtime.GOMAXPROCS(cpunum)
-
-	log.Println("max cpu num: ", cpunum)
-
 	server = srpc.NewServer(addr)
 	server.RegMethod(&s)
 
@@ -62,6 +57,12 @@ func Server(addr string) {
 }
 
 func main() {
+
+	cpunum := runtime.NumCPU()
+	runtime.GOMAXPROCS(cpunum)
+
+	log.Println("max cpu num: ", cpunum)
+
 	addr := ":1234"
 	args := os.Args
 	if len(args) == 2 {
