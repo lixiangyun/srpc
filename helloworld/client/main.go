@@ -18,7 +18,7 @@ func ClientSync(addr string) {
 		return
 	}
 
-	err := client.Start(1)
+	err := client.Start()
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -76,7 +76,7 @@ func ClientAsync(addr string) {
 		return
 	}
 
-	err := client.Start(1)
+	err := client.Start()
 	if err != nil {
 		log.Println(err.Error())
 		return
