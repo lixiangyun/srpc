@@ -12,7 +12,7 @@ import (
 var wait sync.WaitGroup
 
 const (
-	MAX_MSGID = 1000000
+	MAX_MSGID = 100000
 )
 
 func Client(addr string) {
@@ -85,7 +85,7 @@ func ClientAsync(addr string) {
 		return
 	}
 
-	err := client.Start(1)
+	err := client.Start()
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -93,8 +93,6 @@ func ClientAsync(addr string) {
 
 	var a, b uint32
 	a = 1
-
-	log.Println("start...")
 
 	done := make(chan *srpc.Result, 1000)
 
@@ -107,7 +105,6 @@ func ClientAsync(addr string) {
 	}
 
 	stop.Wait()
-	log.Println("end...")
 
 	client.Stop()
 }
@@ -121,7 +118,7 @@ func main() {
 
 	log.Println("max cpu num: ", cpunum)
 
-	num := 10
+	num := cpunum
 
 	args := os.Args
 
