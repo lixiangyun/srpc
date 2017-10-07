@@ -3,6 +3,7 @@ package srpc
 import (
 	"log"
 	"reflect"
+	"runtime"
 	"srpc/comm"
 	"sync"
 )
@@ -138,7 +139,7 @@ func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 	parms[0] = reflect.New(reqtype)
 	parms[1] = reflect.New(rsptype)
 
-	err = comm.DecodePacket(req.Body, parms[0].Interface())
+	err = comm.BinaryDecoder(req.Body, parms[0].Interface())
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -156,11 +157,11 @@ func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 	if value != nil {
 		rsp.ErrNo = 1
 		rsp.ReqID = req.ReqID
-		rsp.Body, err = comm.CodePacket(value)
+		rsp.Body, err = comm.BinaryCoder(value)
 	} else {
 		rsp.ErrNo = 0
 		rsp.ReqID = req.ReqID
-		rsp.Body, err = comm.CodePacket(reflect.Indirect(parms[1]).Interface())
+		rsp.Body, err = comm.BinaryCoder(reflect.Indirect(parms[1]).Interface())
 	}
 
 	if err != nil {
@@ -195,7 +196,6 @@ func (c *Server) reqMsgProcess(conn *comm.Server, reqid uint32, body []byte) {
 
 	err = conn.SendMsg(SRPC_CALL_METHOD, body)
 	if err != nil {
-		log.Println(err.Error())
 
 		StatAdd(1, 0, 1)
 		return
@@ -212,7 +212,7 @@ func (c *Server) reqMethodProcess(conn *comm.Server, reqid uint32, body []byte) 
 
 	rspmethod.Method = c.functable.GetBatch()
 
-	body, err := comm.CodePacket(rspmethod)
+	body, err := comm.BinaryCoder(rspmethod)
 	if err != nil {
 		log.Println(err.Error())
 		return
@@ -220,23 +220,32 @@ func (c *Server) reqMethodProcess(conn *comm.Server, reqid uint32, body []byte) 
 
 	err = conn.SendMsg(SRPC_SYNC_METHOD, body)
 	if err != nil {
-		log.Println(err.Error())
 		return
 	}
 }
 
 func (s *Server) Start() {
 
+	cpunum := runtime.NumCPU()
+
 	for {
+
 		comm, err := s.lis.Accept()
 		if err != nil {
 			log.Println(err.Error())
 			return
 		}
 
+		log.Println("new server instance")
+
 		comm.RegHandler(SRPC_SYNC_METHOD, s.reqMethodProcess)
 		comm.RegHandler(SRPC_CALL_METHOD, s.reqMsgProcess)
 
-		comm.Start(2)
+		go func() {
+			comm.Start(cpunum, 1000)
+			comm.Wait()
+
+			log.Println("close server instance")
+		}()
 	}
 }
