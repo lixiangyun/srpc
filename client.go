@@ -90,9 +90,9 @@ func (c *Client) reqMsgProcess() {
 				delete(resultTable, rspmsg.msg.ReqID)
 
 				if rspmsg.msg.ErrNo == 0 {
-					err = comm.DecodePacket(rspmsg.msg.Body, result.Rsp)
+					err = comm.BinaryDecoder(rspmsg.msg.Body, result.Rsp)
 				} else {
-					err = comm.DecodePacket(rspmsg.msg.Body, &result.Err)
+					err = comm.BinaryDecoder(rspmsg.msg.Body, &result.Err)
 				}
 
 				if err != nil {
@@ -118,8 +118,6 @@ func (c *Client) rspMsgProcess(conn *comm.Client, reqid uint32, body []byte) {
 	rsp.msg.ErrNo = comm.GetUint32(body[8:])
 	rsp.msg.Body = body[12:]
 
-	//log.Println("recv: ", rsp.msg)
-
 	c.RspQue <- rsp
 }
 
@@ -128,7 +126,7 @@ func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) 
 	var functable MethodAll
 	functable.Method = make([]MethodInfo, 0)
 
-	err := comm.DecodePacket(body, &functable)
+	err := comm.BinaryDecoder(body, &functable)
 	if err != nil {
 		log.Println(err.Error())
 		c.done <- false
@@ -149,7 +147,7 @@ func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) 
 	c.done <- true
 }
 
-func (c *Client) Start(num int) error {
+func (c *Client) Start() error {
 
 	err := c.conn.RegHandler(SRPC_SYNC_METHOD, c.rspMethodProcess)
 	if err != nil {
@@ -161,7 +159,7 @@ func (c *Client) Start(num int) error {
 		return err
 	}
 
-	err = c.conn.Start(num)
+	err = c.conn.Start(1, 1000)
 	if err != nil {
 		return err
 	}
@@ -184,7 +182,7 @@ func (c *Client) Start(num int) error {
 
 func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 
-	done := make(chan *Result)
+	done := make(chan *Result, 10)
 
 	c.CallAsync(method, req, rsp, done)
 	result := <-done
@@ -247,7 +245,7 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 	reqblock := new(Request)
 	reqblock.msg.ReqID = atomic.AddUint64(&c.ReqID, 1)
 	reqblock.msg.MethodID = funcinfo.ID
-	reqblock.msg.Body, err = comm.CodePacket(req)
+	reqblock.msg.Body, err = comm.BinaryCoder(req)
 	if err != nil {
 		result.Err = err
 		done <- result
@@ -262,8 +260,11 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 }
 
 func (c *Client) Stop() {
+
 	c.conn.Stop()
+	c.conn.Wait()
+
 	c.done <- true
+
 	c.wait.Wait()
-	log.Println("client shut down!")
 }
