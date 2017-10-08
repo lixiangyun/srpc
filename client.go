@@ -10,36 +10,35 @@ import (
 )
 
 type Client struct {
-	ReqID uint64
-	conn  *comm.Client
+	ReqID uint64       // 请求ID
+	conn  *comm.Client // 通信结构信息
 
-	ReqQue chan *Request
-	RspQue chan *Rsponse
+	ReqQue chan *Request // 请求消息缓存队列
+	RspQue chan *Rsponse // 应答消息缓存队列
 
-	functable *Method
-
-	done chan bool
-
-	wait sync.WaitGroup
+	functable *Method        // 符号表信息
+	done      chan bool      // 结束通道
+	wait      sync.WaitGroup // 等待资源销毁同步等待
 }
 
 type Request struct {
-	msg    ReqHeader
-	result *Result
+	msg    ReqHeader // 请求消息头
+	result *Result   // 请求上下文信息
 }
 
 type Rsponse struct {
-	msg RspHeader
+	msg RspHeader // 消息头
 }
 
 type Result struct {
-	Err    error
-	Method string
-	Req    interface{}
-	Rsp    interface{}
-	Done   chan *Result
+	Err    error        // 错误信息
+	Method string       // 请求的方法名称
+	Req    interface{}  // 请求的参数
+	Rsp    interface{}  // 应答的参数
+	Done   chan *Result // 请求等待通道
 }
 
+// 申请一个srpc客户端资源
 func NewClient(addr string) *Client {
 	c := new(Client)
 	c.conn = comm.NewClient(addr)
@@ -50,6 +49,7 @@ func NewClient(addr string) *Client {
 	return c
 }
 
+// 请求&应答消息缓存处理任务
 func (c *Client) reqMsgProcess() {
 	defer c.wait.Done()
 
@@ -58,6 +58,7 @@ func (c *Client) reqMsgProcess() {
 	for {
 
 		select {
+		// 读取请求消息缓存队列
 		case reqmsg := <-c.ReqQue:
 			{
 				//log.Println("ReqMsg: ", reqmsg.msg)
@@ -76,6 +77,7 @@ func (c *Client) reqMsgProcess() {
 
 				c.conn.SendMsg(SRPC_CALL_METHOD, body)
 			}
+			// 读取应答消息缓存队列
 		case rspmsg := <-c.RspQue:
 			{
 				var err error
@@ -102,6 +104,7 @@ func (c *Client) reqMsgProcess() {
 
 				result.Done <- result
 			}
+			// 监听任务退出
 		case <-c.done:
 			{
 				log.Println("msg proc shutdown!")
@@ -111,6 +114,7 @@ func (c *Client) reqMsgProcess() {
 	}
 }
 
+// 应答消息接收函数，将通道的消息反序列化，并且发送至应答缓存队列。
 func (c *Client) rspMsgProcess(conn *comm.Client, reqid uint32, body []byte) {
 
 	rsp := new(Rsponse)
@@ -121,6 +125,7 @@ func (c *Client) rspMsgProcess(conn *comm.Client, reqid uint32, body []byte) {
 	c.RspQue <- rsp
 }
 
+// 服务端方法同步处理，将服务端的调用方法，同步到客户端本地，提供快速查询匹配，提升性能。
 func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) {
 
 	var functable MethodAll
@@ -147,6 +152,7 @@ func (c *Client) rspMethodProcess(conn *comm.Client, reqid uint32, body []byte) 
 	c.done <- true
 }
 
+// 客户端启动函数，用于启动客户端通信和调度任务
 func (c *Client) Start() error {
 
 	err := c.conn.RegHandler(SRPC_SYNC_METHOD, c.rspMethodProcess)
@@ -180,6 +186,7 @@ func (c *Client) Start() error {
 	return nil
 }
 
+// 客户端提供的RPC同步调用方法
 func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 
 	done := make(chan *Result, 10)
@@ -194,6 +201,7 @@ func (c *Client) Call(method string, req interface{}, rsp interface{}) error {
 	return nil
 }
 
+// 客户端提供的RPC异步调用方法，需要用户传入等待通道，以便在接收到应答之后，唤醒并且返回处理结果；
 func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done chan *Result) chan *Result {
 
 	if done == nil {
@@ -259,6 +267,7 @@ func (c *Client) CallAsync(method string, req interface{}, rsp interface{}, done
 	return done
 }
 
+// 客户端rpc服务停止函数，停止并且释放客户端资源；
 func (c *Client) Stop() {
 
 	c.conn.Stop()
