@@ -8,41 +8,48 @@ import (
 	"sync"
 )
 
+// 定义请求ID
 const (
-	SRPC_SYNC_METHOD = 0
-	SRPC_CALL_METHOD = 1
+	SRPC_SYNC_METHOD = 0 // 客户端同步服务端方法信息的请求ID
+	SRPC_CALL_METHOD = 1 // 客户端调用服务端方法的请求ID
 )
 
+// 请求报文结构
 type ReqHeader struct {
-	ReqID    uint64
-	MethodID uint32
-	Body     []byte
+	ReqID    uint64 // 请求ID
+	MethodID uint32 // 请求方法ID
+	Body     []byte // 内容
 }
 
+// 应答报文结构
 type RspHeader struct {
-	ReqID uint64
-	ErrNo uint32
-	Body  []byte
+	ReqID uint64 // 请求ID
+	ErrNo uint32 // 错误码
+	Body  []byte // 内容
 }
 
+// 包含全部的方法信息，用于客户端同步服务端的方法信息；
 type MethodAll struct {
 	Method []MethodInfo
 }
 
+// 方法的反射管理结构
 type MethodValue struct {
-	FuncValue reflect.Value
-	FuncType  reflect.Type
-	ReqType   reflect.Type
-	RspType   reflect.Type
+	FuncValue reflect.Value // 方法的反射
+	FuncType  reflect.Type  // 方法的类型反射
+	ReqType   reflect.Type  // 请求参数类型的反射
+	RspType   reflect.Type  // 应答参数类型的反射
 }
 
+// 服务端对象的结构
 type Server struct {
-	functable *Method
-	funcvalue map[uint32]MethodValue
-	rwlock    sync.RWMutex
-	lis       *comm.Listen
+	functable *Method                // 方法的管理结构
+	funcvalue map[uint32]MethodValue // 方法的反射
+	rwlock    sync.RWMutex           // 读写锁
+	lis       *comm.Listen           // 通信通道对象
 }
 
+// 申请一个RPC服务端对象
 func NewServer(addr string) *Server {
 	s := new(Server)
 	s.lis = comm.NewListen(addr)
@@ -54,6 +61,7 @@ func NewServer(addr string) *Server {
 	return s
 }
 
+// 注册方法，需要传入对象的指针。并且对象需要有相应的处理方法；
 func (s *Server) RegMethod(pthis interface{}) {
 
 	//创建反射变量，注意这里需要传入ruTest变量的地址；
@@ -124,6 +132,9 @@ func (s *Server) RegMethod(pthis interface{}) {
 	}
 }
 
+/* 调用服务端提供的方法，根据方法ID获取到相应的方法，并且构造参数，
+ * 传递给方法执行，将执行的结果发送给客户端。
+ */
 func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 
 	funcvalue, b := s.funcvalue[req.MethodID]
@@ -172,6 +183,7 @@ func (s *Server) CallMethod(req ReqHeader) (rsp RspHeader, err error) {
 	return
 }
 
+// rpc调用请求的服务端处理函数；
 func (c *Server) reqMsgProcess(conn *comm.Server, reqid uint32, body []byte) {
 	var req ReqHeader
 
@@ -206,30 +218,39 @@ func (c *Server) reqMsgProcess(conn *comm.Server, reqid uint32, body []byte) {
 	//log.Println("send rsp: ", rsp)
 }
 
+// 客户端请求查询服务端提供的方法信息；
 func (c *Server) reqMethodProcess(conn *comm.Server, reqid uint32, body []byte) {
 
 	var rspmethod MethodAll
 
+	// 获取服务端提供的全部的方法
 	rspmethod.Method = c.functable.GetBatch()
 
+	// 编码方法信息成二进制body内容
 	body, err := comm.BinaryCoder(rspmethod)
 	if err != nil {
 		log.Println(err.Error())
 		return
 	}
 
+	// 发送给客户端处理
 	err = conn.SendMsg(SRPC_SYNC_METHOD, body)
 	if err != nil {
 		return
 	}
 }
 
+//服务端RPC启动函数，启动tcp端口监听，并且创建服务实例；
 func (s *Server) Start() {
 
+	/* 获取本地环境的cpu数量，用于注册给服务端实例
+	 * 处理请求的调度任务，提升请求的处理并发量；
+	 */
 	cpunum := runtime.NumCPU()
 
 	for {
 
+		// 监听服务端口
 		comm, err := s.lis.Accept()
 		if err != nil {
 			log.Println(err.Error())
@@ -238,9 +259,11 @@ func (s *Server) Start() {
 
 		log.Println("new server instance")
 
+		// 注册请求ID对应的处理函数
 		comm.RegHandler(SRPC_SYNC_METHOD, s.reqMethodProcess)
 		comm.RegHandler(SRPC_CALL_METHOD, s.reqMsgProcess)
 
+		// 启动服务实例，并且等待服务实例销毁；
 		go func() {
 			comm.Start(cpunum, 1000)
 			comm.Wait()
