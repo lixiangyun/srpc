@@ -5,16 +5,20 @@ import (
 	"srpc"
 )
 
+// 监听的端口和地址信息
 const (
-	LISTEN_ADDR = ":1234"
+	LISTEN_ADDR = ":1234" //
 )
 
+// 服务端对象引用
 var server *srpc.Server
 
+// 调用的对象
 type SAVE struct {
 	tmp uint32
 }
 
+// 对象的方法
 func (s *SAVE) Add(a uint32, b *uint32) error {
 	*b = a + s.tmp
 
@@ -23,6 +27,7 @@ func (s *SAVE) Add(a uint32, b *uint32) error {
 	return nil
 }
 
+// 对象的方法
 func (s *SAVE) Sub(a uint32, b *uint32) error {
 	*b = a - s.tmp
 
@@ -31,6 +36,7 @@ func (s *SAVE) Sub(a uint32, b *uint32) error {
 	return nil
 }
 
+// RPC服务端、申请、启动处理函数。
 func Server(addr string) {
 
 	var s SAVE
@@ -42,7 +48,10 @@ func Server(addr string) {
 		return
 	}
 
+	// 添加save对象的方法
 	rpc_server.RegMethod(&s)
+
+	// 启动rpc服务
 	rpc_server.Start()
 }
 
