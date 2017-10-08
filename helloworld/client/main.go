@@ -6,10 +6,12 @@ import (
 	"sync"
 )
 
+// 服务端的地址
 const (
 	SERVER_ADDR = "localhost:1234"
 )
 
+// 同步调用的rpc示例
 func ClientSync(addr string) {
 
 	client := srpc.NewClient(addr)
@@ -45,6 +47,7 @@ func ClientSync(addr string) {
 	client.Stop()
 }
 
+// 异步调用rpc，等待请求应答的任务；
 func Replay(rspque chan *srpc.Result, stop *sync.WaitGroup) {
 
 	defer stop.Done()
@@ -66,6 +69,7 @@ func Replay(rspque chan *srpc.Result, stop *sync.WaitGroup) {
 	}
 }
 
+// 异步调用的rpc示例
 func ClientAsync(addr string) {
 
 	var stop sync.WaitGroup
