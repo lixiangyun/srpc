@@ -12,7 +12,7 @@ import (
 var wait sync.WaitGroup
 
 const (
-	MAX_MSGID = 100000
+	MAX_MSGID = 1000000
 )
 
 func Client(addr string) {
