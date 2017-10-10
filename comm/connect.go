@@ -70,6 +70,31 @@ func (c *connect) Close() {
 	c.exit <- true
 }
 
+// 序列化报文头
+func coderMsg(msg Header) []byte {
+
+	size := len(msg.Body)
+	tmpbuf := make([]byte, MSG_HEAD_LEN+size)
+
+	PutUint32(MAGIC_FLAG, tmpbuf[0:])
+	PutUint32(msg.ReqID, tmpbuf[4:])
+	PutUint32(uint32(size), tmpbuf[8:])
+	copy(tmpbuf[12:], msg.Body)
+
+	return tmpbuf
+}
+
+// 构造消息发送至消息队列
+func decoderMsg(regid uint32, body []byte) Header {
+
+	var tempmsg Header
+	tempmsg.ReqID = regid
+	tempmsg.Body = make([]byte, len(body))
+	copy(tempmsg.Body, body)
+
+	return tempmsg
+}
+
 // 发送调度协成
 func (c *connect) sendtask() {
 
@@ -90,15 +115,7 @@ func (c *connect) sendtask() {
 			}
 		}
 
-		size := len(msg.Body)
-		tmpbuf := make([]byte, MSG_HEAD_LEN+size)
-
-		// 序列化报文头
-		PutUint32(MAGIC_FLAG, tmpbuf[0:])
-		PutUint32(msg.ReqID, tmpbuf[4:])
-		PutUint32(uint32(size), tmpbuf[8:])
-		copy(tmpbuf[12:], msg.Body)
-
+		tmpbuf := coderMsg(msg)
 		tmpbuflen := len(tmpbuf)
 
 		if tmpbuflen >= MAX_BUF_SIZE/2 {
@@ -120,14 +137,7 @@ func (c *connect) sendtask() {
 
 			msg = <-c.SendBuf
 
-			size = len(msg.Body)
-			tmpbuf = make([]byte, MSG_HEAD_LEN+size)
-
-			PutUint32(MAGIC_FLAG, tmpbuf[0:])
-			PutUint32(msg.ReqID, tmpbuf[4:])
-			PutUint32(uint32(size), tmpbuf[8:])
-			copy(tmpbuf[12:], msg.Body)
-
+			tmpbuf = coderMsg(msg)
 			tmpbuflen = len(tmpbuf)
 
 			copy(buf[buflen:buflen+tmpbuflen], tmpbuf[0:])
@@ -185,44 +195,34 @@ func (c *connect) recvtask() {
 				break
 			}
 
-			var msg msgHeader
-
 			// 反序列化报文内容
-			msg.Flag = GetUint32(buf[lastindex:])
-			msg.ReqID = GetUint32(buf[lastindex+4:])
-			msg.Size = GetUint32(buf[lastindex+8:])
+			Flag := GetUint32(buf[lastindex:])
+			ReqID := GetUint32(buf[lastindex+4:])
+			Size := GetUint32(buf[lastindex+8:])
 
 			bodybegin := lastindex + MSG_HEAD_LEN
-			bodyend := bodybegin + int(msg.Size)
+			bodyend := bodybegin + int(Size)
 
 			// 校验消息头魔术字
-			if msg.Flag != MAGIC_FLAG {
+			if Flag != MAGIC_FLAG {
 
-				log.Println("BAD MSG HEAD: ")
-				log.Println("msg head:", msg)
-				log.Println("totallen:", totallen)
-				log.Println("bodybegin:", bodybegin, " bodyend:", bodyend)
-				log.Println("body:", buf[lastindex:bodyend])
-				log.Println("bodyFull:", buf[0:totallen])
+				log.Println("BadMsg:")
+				log.Println("TotalLen:", totallen)
+				log.Println("BodyBegin:", bodybegin, " bodyend:", bodyend)
+				log.Println("Body:", buf[lastindex:bodyend])
+				log.Println("BodyFull:", buf[0:totallen])
 
 				c.Close()
 				return
 			}
 
 			if bodyend > totallen {
-
 				copy(buf[0:totallen-lastindex], buf[lastindex:totallen])
 				totallen = totallen - lastindex
 				break
 			}
 
-			// 构造消息发送至消息队列
-			var tempmsg Header
-			tempmsg.ReqID = msg.ReqID
-			tempmsg.Body = make([]byte, len(buf[bodybegin:bodyend]))
-			copy(tempmsg.Body, buf[bodybegin:bodyend])
-
-			c.RecvBuf <- tempmsg
+			c.RecvBuf <- decoderMsg(ReqID, buf[bodybegin:bodyend])
 
 			lastindex = bodyend
 		}
@@ -237,16 +237,6 @@ func (c *connect) SendMsg(msg Header) error {
 		c.SendBuf <- msg
 		return nil
 	}
-}
-
-// 获取远端地址
-func (c *connect) RemoteAddr() string {
-	return c.conn.RemoteAddr().String()
-}
-
-// 获取本地地址
-func (c *connect) LocalAddr() string {
-	return c.conn.LocalAddr().String()
 }
 
 // 发送封装的接口
