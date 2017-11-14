@@ -4,8 +4,9 @@ import (
 	"log"
 	"reflect"
 	"runtime"
-	"srpc/comm"
 	"sync"
+
+	"github.com/lixiangyun/comm"
 )
 
 // 定义请求ID
