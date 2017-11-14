@@ -2,12 +2,14 @@ package main
 
 import (
 	"log"
-	"srpc"
+	"os"
+
+	"github.com/lixiangyun/srpc"
 )
 
 // 监听的端口和地址信息
 const (
-	LISTEN_ADDR = ":1234" //
+	DEFAULT_LISTEN_ADDR = ":1234" //
 )
 
 // 服务端对象引用
@@ -39,6 +41,8 @@ func (s *SAVE) Sub(a uint32, b *uint32) error {
 // RPC服务端、申请、启动处理函数。
 func Server(addr string) {
 
+	log.Println("listen : ", addr)
+
 	var s SAVE
 	s.tmp = 100
 
@@ -56,5 +60,12 @@ func Server(addr string) {
 }
 
 func main() {
-	Server(LISTEN_ADDR)
+
+	args := os.Args
+
+	if len(args) > 1 {
+		Server(args[2])
+	} else {
+		Server(DEFAULT_LISTEN_ADDR)
+	}
 }
