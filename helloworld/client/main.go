@@ -2,13 +2,15 @@ package main
 
 import (
 	"log"
-	"srpc"
+	"os"
 	"sync"
+
+	"github.com/lixiangyun/srpc"
 )
 
 // 服务端的地址
 const (
-	SERVER_ADDR = "localhost:1234"
+	DEFAULT_SERVER_ADDR = "localhost:1234"
 )
 
 // 同步调用的rpc示例
@@ -105,6 +107,16 @@ func ClientAsync(addr string) {
 }
 
 func main() {
-	ClientSync(SERVER_ADDR)
-	ClientAsync(SERVER_ADDR)
+
+	var addr string
+	args := os.Args
+
+	if len(args) > 1 {
+		addr = args[2]
+	} else {
+		addr = DEFAULT_SERVER_ADDR
+	}
+
+	ClientSync(addr)
+	ClientAsync(addr)
 }
