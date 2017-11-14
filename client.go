@@ -4,9 +4,10 @@ import (
 	"errors"
 	"log"
 	"reflect"
-	"srpc/comm"
 	"sync"
 	"sync/atomic"
+
+	"github.com/lixiangyun/comm"
 )
 
 type Client struct {
