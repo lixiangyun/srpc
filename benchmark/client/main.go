@@ -4,9 +4,10 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"srpc"
 	"strconv"
 	"sync"
+
+	"github.com/lixiangyun/srpc"
 )
 
 var wait sync.WaitGroup
