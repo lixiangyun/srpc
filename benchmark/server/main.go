@@ -4,8 +4,9 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"srpc"
 	"time"
+
+	"github.com/lixiangyun/srpc"
 )
 
 var server *srpc.Server
