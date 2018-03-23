@@ -16,13 +16,13 @@ type SAVE struct {
 }
 
 func (s *SAVE) Add(a uint32, b *uint32) error {
-	*b = a + 1
+	*b = a
 	//log.Println("call add ", a, *b, s.tmp)
 	return nil
 }
 
 func (s *SAVE) Sub(a uint32, b *uint32) error {
-	*b = a - 1
+	*b = a
 	//log.Println("call sub ", a, *b, s.tmp)
 	return nil
 }
