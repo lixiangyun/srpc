@@ -1,71 +1,55 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"os"
 
 	"github.com/lixiangyun/srpc"
 )
 
-// 监听的端口和地址信息
-const (
-	DEFAULT_LISTEN_ADDR = ":1234" //
-)
-
-// 服务端对象引用
-var server *srpc.Server
-
 // 调用的对象
-type SAVE struct {
-	tmp uint32
+type ServerObj struct {
+}
+
+type InputParam struct {
+	A32 uint32
+	B32 []uint32
+}
+
+type OnputParam struct {
+	Sum string
 }
 
 // 对象的方法
-func (s *SAVE) Add(a uint32, b *uint32) error {
-	*b = a + s.tmp
+func (s *ServerObj) Add(in InputParam, out *OnputParam) error {
 
-	log.Println("call add ", a, *b, s.tmp)
+	var sum uint32
+
+	for _, v := range in.B32 {
+		sum += v
+	}
+
+	out.Sum = fmt.Sprintf("no : %d , sum : %d", in.A32, sum)
+
+	log.Println("call inparm ", in, " outparm", out)
 
 	return nil
 }
 
-// 对象的方法
-func (s *SAVE) Sub(a uint32, b *uint32) error {
-	*b = a - s.tmp
+func main() {
+	// svc对象初始化
+	svc := ServerObj{}
 
-	log.Println("call sub ", a, *b, s.tmp)
-
-	return nil
-}
-
-// RPC服务端、申请、启动处理函数。
-func Server(addr string) {
-
-	log.Println("listen : ", addr)
-
-	var s SAVE
-	s.tmp = 100
-
-	rpc_server := srpc.NewServer(addr)
+	// 创建rpc服务对象
+	rpc_server := srpc.NewServer("127.0.0.1:1200")
 	if rpc_server == nil {
 		log.Println("new rpc server failed!")
 		return
 	}
 
-	// 添加save对象的方法
-	rpc_server.RegMethod(&s)
+	// 将svc对象添加到rpc方法中
+	rpc_server.RegMethod(&svc)
 
-	// 启动rpc服务
+	// 启动rpc服务，并且阻塞运行
 	rpc_server.Start()
-}
-
-func main() {
-
-	args := os.Args
-
-	if len(args) > 1 {
-		Server(args[2])
-	} else {
-		Server(DEFAULT_LISTEN_ADDR)
-	}
 }

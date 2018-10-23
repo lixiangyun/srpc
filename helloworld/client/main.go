@@ -2,121 +2,93 @@ package main
 
 import (
 	"log"
-	"os"
-	"sync"
 
 	"github.com/lixiangyun/srpc"
 )
 
-// 服务端的地址
-const (
-	DEFAULT_SERVER_ADDR = "localhost:1234"
-)
-
-// 同步调用的rpc示例
-func ClientSync(addr string) {
-
-	client := srpc.NewClient(addr)
-	if client == nil {
-		log.Println("new client failed!")
-		return
-	}
-
-	err := client.Start()
-	if err != nil {
-		log.Println(err.Error())
-		return
-	}
-
-	var a, b uint32
-
-	a = 100
-	err = client.Call("Add", a, &b)
-	if err != nil {
-		log.Println(err.Error())
-	} else {
-		log.Println("a=", a, " b=", b)
-	}
-
-	a = 100
-	err = client.Call("Sub", a, &b)
-	if err != nil {
-		log.Println(err.Error())
-	} else {
-		log.Println("a=", a, " b=", b)
-	}
-
-	client.Stop()
+type InputParam struct {
+	A32 uint32
+	B32 []uint32
 }
 
-// 异步调用rpc，等待请求应答的任务；
-func Replay(rspque chan *srpc.Result, stop *sync.WaitGroup) {
+type OnputParam struct {
+	Sum string
+}
 
-	defer stop.Done()
+// 同步调用的rpc示例
+func ClientSync(client *srpc.Client) {
 
-	for i := 0; i < 10; i++ {
-		result, b := <-rspque
+	var in InputParam
+	var out OnputParam
 
-		if b == false {
-			log.Println("client replay chan close!")
-			return
-		}
-
-		if result.Err != nil {
-			log.Println("call method failed!", result)
-		}
-
-		log.Print("No.", i, " call ", result.Method, " return sucess! ")
-		log.Println(" a =", result.Req, " b =", *(result.Rsp.(*uint32)))
+	// 参数初始化
+	in.A32 = 1000
+	in.B32 = make([]uint32, 100)
+	for i := uint32(0); i < 100; i++ {
+		in.B32[i] = i
 	}
+
+	// 同步调用
+	err := client.Call("Add", in, &out)
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+
+	// 打印返回参数
+	log.Println("Sync Call : out = ", out)
 }
 
 // 异步调用的rpc示例
-func ClientAsync(addr string) {
+func ClientAsync(client *srpc.Client) {
 
-	var stop sync.WaitGroup
+	var in InputParam
+	var out OnputParam
 
-	client := srpc.NewClient(addr)
-	if client == nil {
-		log.Println("new client failed!")
+	// 参数初始化
+	in.A32 = 500
+	in.B32 = make([]uint32, 50)
+	for i := uint32(0); i < 50; i++ {
+		in.B32[i] = i
+	}
+
+	// 创建异步的接收管道
+	done := make(chan *srpc.Result, 1)
+
+	// 异步调用
+	client.CallAsync("Add", in, &out, done)
+
+	// 等待结果
+	result := <-done
+
+	// 处理结果
+	if result.Err != nil {
+		log.Println("call method failed!", result)
 		return
 	}
 
-	err := client.Start()
-	if err != nil {
-		log.Println(err.Error())
-		return
-	}
-
-	var a, b uint32
-	a = 1
-
-	done := make(chan *srpc.Result, 10)
-
-	stop.Add(1)
-	go Replay(done, &stop)
-
-	for i := 0; i < 10; i++ {
-		a = uint32(i)
-		client.CallAsync("Add", a, &b, done)
-	}
-
-	stop.Wait()
-
-	client.Stop()
+	// 打印返回参数
+	log.Println("Async Call : out = ", out)
 }
 
 func main() {
 
-	var addr string
-	args := os.Args
-
-	if len(args) > 1 {
-		addr = args[2]
-	} else {
-		addr = DEFAULT_SERVER_ADDR
+	// 创建rpc客户端对象
+	client := srpc.NewClient("127.0.0.1:1200")
+	if client == nil {
+		log.Println("new client failed!")
+		return
 	}
 
-	ClientSync(addr)
-	ClientAsync(addr)
+	// 启动rpc客户端
+	err := client.Start()
+	if err != nil {
+		log.Println(err.Error())
+		return
+	}
+
+	defer client.Stop()
+
+	ClientSync(client)
+	ClientAsync(client)
 }
