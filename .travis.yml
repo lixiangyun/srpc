@@ -7,7 +7,7 @@ go:
   - master
 
 script:
-  - go build -v ./benchmark/client
-  - go build -v ./benchmark/server
-  - go build -v ./helloworld/client
-  - go build -v ./helloworld/server
+  - go build -v -o benchmark_client ./benchmark/client
+  - go build -v -o benchmark_server ./benchmark/server
+  - go build -v -o helloworld_client ./helloworld/client
+  - go build -v -o helloworld_server ./helloworld/server
