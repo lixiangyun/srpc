@@ -62,6 +62,15 @@ func NewServer(addr string) *Server {
 	return s
 }
 
+// 使能tls认证&加密
+func (s *Server) TlsEnable(ca, cert, key string) error {
+	err := s.lis.TlsEnable(ca, cert, key)
+	if err != nil {
+		log.Println("RPC TlsEnable: ", err.Error())
+	}
+	return err
+}
+
 // 注册方法，需要传入对象的指针。并且对象需要有相应的处理方法；
 func (s *Server) RegMethod(pthis interface{}) {
 

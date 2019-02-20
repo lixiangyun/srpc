@@ -9,6 +9,12 @@ import (
 	"github.com/lixiangyun/srpc"
 )
 
+const (
+	CA   = "../../cert/ca.crt"
+	CERT = "../../cert/client.crt"
+	KEY  = "../../cert/client.pem"
+)
+
 var wait sync.WaitGroup
 
 func ClientSync(client *srpc.Client) {
@@ -57,6 +63,7 @@ func main() {
 	if client == nil {
 		return
 	}
+	client.TlsEnable(CA, CERT, KEY)
 
 	err := client.Start()
 	if err != nil {

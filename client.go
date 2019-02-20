@@ -50,6 +50,15 @@ func NewClient(addr string) *Client {
 	return c
 }
 
+// 使能tls认证&加密
+func (c *Client) TlsEnable(ca, cert, key string) error {
+	err := c.conn.TlsEnable(ca, cert, key)
+	if err != nil {
+		log.Println("RPC TlsEnable: ", err.Error())
+	}
+	return err
+}
+
 // 请求&应答消息缓存处理任务
 func (c *Client) reqMsgProcess() {
 	defer c.wait.Done()

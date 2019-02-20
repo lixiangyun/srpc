@@ -3,10 +3,15 @@ package main
 import (
 	"log"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/lixiangyun/srpc"
+)
+
+const (
+	CA   = "../../cert/ca.crt"
+	CERT = "../../cert/server.crt"
+	KEY  = "../../cert/server.pem"
 )
 
 var server *srpc.Server
@@ -51,6 +56,7 @@ func Server(addr string) {
 
 	server = srpc.NewServer(addr)
 	server.RegMethod(&s)
+	server.TlsEnable(CA, CERT, KEY)
 
 	go server.Start()
 
@@ -58,11 +64,6 @@ func Server(addr string) {
 }
 
 func main() {
-
-	cpunum := runtime.NumCPU()
-	runtime.GOMAXPROCS(cpunum)
-
-	log.Println("max cpu num: ", cpunum)
 
 	addr := ":1234"
 	args := os.Args
